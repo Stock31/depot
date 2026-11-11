@@ -35,10 +35,17 @@ header button.tuile { flex: none; width: 88px; height: 54px; display: flex; flex
   background: transparent; border: 1px solid var(--sur-entete); color: var(--sur-entete); border-radius: 12px; padding: 2px 4px; cursor: pointer;
   font-size: 11px; font-weight: 700; line-height: 1.15; white-space: nowrap; }
 header button.tuile .icone { font-size: 20px; line-height: 1.1; }
+/* ⚙ Réglages, à côté de la synchro, comme l'appli */
+header button.reglages { flex: none; background: transparent; border: 0; color: var(--sur-entete); font-size: 26px; line-height: 1;
+  padding: 6px 4px 6px 6px; cursor: pointer; opacity: .85; }
+header button.reglages.actif { opacity: 1; text-shadow: 0 0 6px currentColor; }
 nav.onglets { display: flex; gap: 4px; margin-top: 10px; overflow-x: auto; }
 nav.onglets button { flex: 1 1 auto; background: transparent; border: 0; color: var(--sur-entete); opacity: .7;
   padding: 10px 6px; font-weight: 600; font-size: 15px; white-space: nowrap; border-bottom: 3px solid transparent; }
-@media (max-width: 420px) { nav.onglets button { font-size: 14px; padding: 10px 4px; } }
+@media (max-width: 420px) {
+  nav.onglets button { font-size: 14px; padding: 10px 4px; }
+  header button.tuile { width: 76px; }
+}
 nav.onglets button.actif { opacity: 1; border-bottom-color: var(--sur-entete); }
 /* L'onglet ⚠ : pastille rouge vif toujours bien visible (même quand l'onglet n'est pas choisi) */
 nav.onglets button.signaler { opacity: 1; }
@@ -107,7 +114,12 @@ table.tableau td.ref { font: 12px ui-monospace, Menlo, Consolas, monospace; colo
 table.tableau td.nombre { font-weight: 700; }
 table.tableau td.roue-case { padding: 3px 6px; text-align: center; }
 table.tableau button.roue { width: 34px; height: 34px; font-size: 17px; }
+table.tableau th.triable { cursor: pointer; user-select: none; }
+table.tableau td.note { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 table.tableau tr.detail-ligne td { white-space: normal; background: var(--fond); }
+/* ☰ Colonnes : une ligne par colonne possible */
+.ligne-colonne { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--ligne); }
+.ligne-colonne label.case { margin: 0; flex: 1; }
 table.tableau tr.detail-ligne .detail { border-top: 0; max-width: calc(100vw - 60px); white-space: normal; }
 /* Bloc-notes : l'ardoise à dessin et les dessins reçus */
 canvas.ardoise { display: block; width: 100%; background: #FFFFFF; border: 1px solid var(--ligne); border-radius: 10px; touch-action: none; cursor: crosshair; }

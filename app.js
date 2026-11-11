@@ -402,8 +402,9 @@ function ecranRappel() {
 // ------------------------------------------------------------------ l'écran principal
 
 // Sanji, 11/11 : « À signaler » devient ⚠ (avec le nombre), pour gagner de la place
-// L'onglet « Comptes » devient « Réglages » (11/11) : il porte aussi le type d'affichage du stock et la déconnexion
-const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['idees', '✎ Idées'], ['comptes', 'Réglages']];
+// Les réglages (comptes, type d'affichage du stock, déconnexion) s'ouvrent par la roue ⚙ de l'en-tête,
+// à côté de la synchro, comme dans l'appli (Sanji, 11/11) : ce n'est plus un onglet
+const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['idees', '✎ Idées']];
 
 function principal(onglet) {
   etat.onglet = onglet || 'stock';
@@ -419,7 +420,7 @@ function principal(onglet) {
   const corps = el('main');
   // En-tête comme l'appli (Sanji, 11/11) : le titre et le prénom dessous ; à droite Scan et la synchro, même taille,
   // l'icône en grand et le mot en petit ; l'heure de la dernière lecture est dans le bouton de synchro.
-  // « Déconnexion » est en bas de l'onglet Comptes.
+  // La roue ⚙ ouvre les Réglages (« Déconnexion » est en bas).
   vider(app).append(
     el('header', {},
       el('div', { class: 'ligne1' },
@@ -427,7 +428,9 @@ function principal(onglet) {
         el('button', { class: 'tuile', title: 'Scanner une étiquette', onclick: () => scanner(code => ouvrirArticleScanne(code)) },
           el('span', { class: 'icone' }, '▣'), el('span', {}, 'Scan')),
         el('button', { class: 'tuile', title: 'Relire le document', onclick: rafraichir },
-          el('span', { class: 'icone' }, '⟳'), el('span', {}, `synchro ${etat.charge ? fmtHeure.format(etat.charge) : '—'}`))),
+          el('span', { class: 'icone' }, '⟳'), el('span', {}, `synchro ${etat.charge ? fmtHeure.format(etat.charge) : '—'}`)),
+        el('button', { class: 'reglages' + (etat.onglet === 'comptes' ? ' actif' : ''), title: 'Réglages', 'aria-label': 'Réglages',
+          onclick: () => principal('comptes') }, '⚙︎')),
       nav),
     corps);
   ({ stock: pageStock, signaler: pageSignaler, kits: pageKits, idees: pageIdees, comptes: pageComptes })[etat.onglet](corps);
@@ -525,7 +528,8 @@ function ordreSuivant(t, g) {
 const triFr = (a, b) => a.localeCompare(b, 'fr');
 
 function editeurArticle(t, o0) {
-  const o = trouver(t, o0.id) || o0;
+  const neuf = !o0;     // « + Nouvel article » (la ligne ajoutée au tableau)
+  const o = neuf ? {} : (trouver(t, o0.id) || o0);
   const champ = (v, indice, extra) => el('input', { type: 'text', value: v === null || v === undefined ? '' : String(v), placeholder: indice, ...(extra || {}) });
   const nom = champ(o.nom, t === 'bobines' ? 'ex. Bobine 400 mm Gris 9006 / Cuivre' : t === 'descentes' ? 'ex. Descente Ø100 Anthracite 7016' : 'ex. Fond G300 Blanc');
   const nomCourt = champ(o.nom_court, 'court, pour l\'étiquette (26 caractères conseillés)');
@@ -547,7 +551,7 @@ function editeurArticle(t, o0) {
   const zs = tous('zones').filter(z => !z.est_groupe).sort((a, b) => triFr(String(a.id), String(b.id)));
   const optZones = zs.map(z => [z.id, `${z.id} · ${z.libelle || ''}`]);
   if (o.zone && !zs.some(z => z.id === o.zone)) optZones.push([o.zone, o.zone]);
-  const zone = choixListe([[null, '— choisir —'], ...optZones], o.zone);
+  const zone = choixListe([[null, '— choisir —'], ...optZones], o.zone || (neuf ? ({ bobines: 'H1', descentes: 'H2' })[t] : null));
   let famille = null;
   if (t === 'accessoires') {
     const fs = [...new Set(tous('accessoires').map(x => x.famille).filter(Boolean).concat(o.famille ? [o.famille] : []))].sort(triFr);
@@ -630,6 +634,21 @@ function editeurArticle(t, o0) {
       valeurs.seuil = s;
       if (t === 'descentes') valeurs.par_carton = pc;
     }
+    if (neuf) {
+      // Article neuf : identifiant = référence (règle du document) ; il apparaît « à compter »
+      const champsN = { ...valeurs, supprime: false };
+      if (t === 'accessoires') champsN.suivi = true;
+      if (t === 'bobines') champsN.metres = [];
+      if (t !== 'accessoires') { champsN.g_ordre = gOrdre(t, g); champsN.ordre = ordreSuivant(t, g); }
+      bouton.disabled = true;
+      try {
+        await ecrire(t, r, champsN);
+        fermerFenetre();
+        principal(etat.onglet);
+        alert(`« ${n} » est créé : il apparaît « à compter ».`);
+      } catch (e) { msg.textContent = e.message; bouton.disabled = false; }
+      return;
+    }
     // Une case absente vaut sa valeur par défaut (alerte : oui ; façon de compter : quantité) : pas d'écriture inutile
     const ancienne = k => k === 'signaler' ? o.signaler !== false : k === 'mode' ? (o.mode || 'quantite') : o[k];
     const champs = {};
@@ -654,11 +673,12 @@ function editeurArticle(t, o0) {
   }
 
   ouvrirFenetre(ajouterA(el('div', {}),
-    el('h2', {}, 'Modifier l\'article'),
+    el('h2', {}, neuf ? `Nouvel article : ${({ accessoires: 'accessoire', bobines: 'bobine', descentes: 'descente' })[t]}` : 'Modifier l\'article'),
     el('label', {}, 'Nom'), nom,
     el('label', {}, 'Nom court (étiquette)'), nomCourt,
     el('label', {}, 'Référence = code-barres'), ref,
-    el('p', { class: 'aide' }, 'La changer change le code-barres : il faudra réimprimer l\'étiquette.'),
+    el('p', { class: 'aide' }, neuf ? 'Majuscules et tirets, la couleur à la fin. Elle ne doit pas déjà exister.'
+      : 'La changer change le code-barres : il faudra réimprimer l\'étiquette.'),
     couleur ? [el('label', {}, 'Couleur'), couleur] : null,
     groupe ? [el('label', {}, titreGroupe), groupe, groupeAutre] : null,
     el('label', {}, 'Emplacement'), zone,
@@ -669,10 +689,10 @@ function editeurArticle(t, o0) {
     blocSeuil,
     el('label', { class: 'case' }, signaler, 'Prévenir quand il en manque (À signaler)'),
     el('label', {}, 'Note'), note,
-    el('p', { class: 'aide', style: 'margin-top:12px' }, `Dernier changement : ${o.maj_par || '?'}${o.maj ? ' le ' + jour(o.maj) : ''}`),
+    neuf ? null : el('p', { class: 'aide', style: 'margin-top:12px' }, `Dernier changement : ${o.maj_par || '?'}${o.maj ? ' le ' + jour(o.maj) : ''}`),
     msg,
-    el('button', { class: 'principal', onclick: ev => enregistrer(ev.currentTarget) }, 'Enregistrer'),
-    el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: ev => corbeille(ev.currentTarget) }, 'Mettre à la corbeille'),
+    el('button', { class: 'principal', onclick: ev => enregistrer(ev.currentTarget) }, neuf ? 'Créer l\'article' : 'Enregistrer'),
+    neuf ? null : el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: ev => corbeille(ev.currentTarget) }, 'Mettre à la corbeille'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')),
     { fixe: true });   // on ne perd pas la saisie en touchant à côté par erreur
 }
@@ -772,7 +792,11 @@ function pageStock(corps) {
   }
   champ.addEventListener('input', () => { etat.recherche = champ.value; dessiner(); });
   dessinerPuces(); dessiner();
-  corps.append(champ, puces, liste);
+  // « + Nouvel article » (ajouter une ligne) ; en tableau, « ☰ Colonnes » (la disposition de chacun)
+  const outils = ajouterA(el('div', { class: 'rangee', style: 'margin-bottom:10px' }),
+    el('button', { class: 'second etire', onclick: nouvelArticle }, '+ Nouvel article'),
+    affichageStock() === 'tableau' ? el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, '☰ Colonnes') : null);
+  corps.append(outils, champ, puces, liste);
 }
 
 // ------------------------------------------------------------------ Stock en tableau (façon Excel)
@@ -782,7 +806,112 @@ function pageStock(corps) {
  *  Le choix est retenu sur l'appareil (chacun le sien) ; d'office : le tableau. */
 function affichageStock() { return lireStockage('sd_affichage') === 'dossiers' ? 'dossiers' : 'tableau'; }
 
-const COLONNES = ['Article', 'Réf.', 'Stock', 'État', 'Seuil', 'Fournisseur', 'Compté le', ''];
+/** Toutes les colonnes possibles (Sanji : « que le site mémorise la disposition des patrons, la possibilité d'ajouter
+ *  des colonnes, et que ça ne casse pas tout »). « Article » reste la première et ⚙ la dernière ; les autres se
+ *  choisissent et se rangent (☰ Colonnes). On ne fait que montrer ce que le document connaît déjà : rien ne peut casser.
+ *  Une colonne vraiment nouvelle (une donnée qui n'existe pas) passe par Yannick et Claude : demande dans ✎ Idées. */
+const ORDRE_ETAT = { MANQUE: 0, SIGNALER: 1, VUE: 2, COMPTER: 3, DECIDER: 4, OK: 5, CORBEILLE: 6 };
+function quantiteTri(t, o) {
+  if (t === 'bobines') { const m = metres(o); return m.length ? m.reduce((a, x) => a + x, 0) : null; }
+  if (t === 'descentes') return metresDescente(o);
+  if (o.mode === 'niveau') { const i = niveaux().findIndex(n => n[0] === o.niveau); return i < 0 ? null : i; }
+  return num(o.quantite);
+}
+const MODES = { quantite: 'Quantité', niveau: 'Niveau', mixte: 'Mixte' };
+const COLONNES_TOUTES = [
+  { k: 'ref', titre: 'Réf.', classe: 'ref', val: (t, o) => o.ref || o.id, tri: (t, o) => o.ref || o.id },
+  { k: 'stock', titre: 'Stock', classe: 'nombre', val: (t, o) => valeurCourte(t, o) || '—', tri: quantiteTri },
+  { k: 'etat', titre: 'État', val: (t, o) => pastille(statut(t, o)), tri: (t, o) => ORDRE_ETAT[statut(t, o)] ?? 9 },
+  { k: 'seuil', titre: 'Seuil', val: (t, o) => seuilTexte(t, o), tri: (t, o) => num(o.seuil) },
+  { k: 'fournisseur', titre: 'Fournisseur', val: (t, o) => o.fournisseur || '—', tri: (t, o) => o.fournisseur },
+  { k: 'compte', titre: 'Compté le', val: (t, o) => o.compte ? jour(o.compte) : '—', tri: (t, o) => o.compte },
+  { k: 'zone', titre: 'Emplacement', val: (t, o) => o.zone || '—', tri: (t, o) => o.zone },
+  { k: 'famille', titre: 'Famille', val: (t, o) => o.famille || '—', tri: (t, o) => o.famille },
+  { k: 'couleur', titre: 'Couleur', val: (t, o) => o.couleur || '—', tri: (t, o) => o.couleur },
+  { k: 'groupe', titre: 'Largeur / Ø', val: (t, o) => o.groupe || '—', tri: (t, o) => o.groupe },
+  { k: 'mode', titre: 'Façon de compter', val: (t, o) => t === 'accessoires' ? MODES[o.mode || 'quantite'] || o.mode : 'Mètres', tri: (t, o) => t === 'accessoires' ? (o.mode || 'quantite') : 'metres' },
+  { k: 'unite', titre: 'Unité', val: (t, o) => t !== 'accessoires' ? 'ml' : o.mode === 'niveau' ? '—' : (o.unite || 'pièces'), tri: (t, o) => t !== 'accessoires' ? 'ml' : (o.unite || 'pièces') },
+  { k: 'par_carton', titre: 'Contenance', val: (t, o) => num(o.par_carton) === null ? '—' : nombreJoli(num(o.par_carton)), tri: (t, o) => num(o.par_carton) },
+  { k: 'note', titre: 'Note', classe: 'note', val: (t, o) => o.note || '—', tri: (t, o) => o.note },
+  { k: 'maj', titre: 'Dernier changement', val: (t, o) => o.maj ? `${jour(o.maj)}${o.maj_par ? ' · ' + o.maj_par : ''}` : '—', tri: (t, o) => o.maj },
+];
+const COLONNES_ORIGINE = ['ref', 'stock', 'etat', 'seuil', 'fournisseur', 'compte'];
+
+/** La disposition est retenue dans le document, au nom du compte : elle suit chaque patron sur tous ses appareils. */
+function cleDisposition() { return 'site_tableau_' + normaliser(etat.identifiant || 'moi').replace(/[^a-z0-9]+/g, '_'); }
+function colonnesChoisies() {
+  const r = reglage(cleDisposition());
+  const l = r && Array.isArray(r.colonnes) ? r.colonnes.filter(k => COLONNES_TOUTES.some(c => c.k === k)) : null;
+  return (l || COLONNES_ORIGINE).map(k => COLONNES_TOUTES.find(c => c.k === k));
+}
+async function enregistrerColonnes(choix) {
+  await ecrire('reglages', cleDisposition(), { valeur: { colonnes: choix }, description: `Disposition du tableau du site pour ${etat.identifiant}`, supprime: false });
+}
+
+/** Tri : on touche le titre d'une colonne (une fois : croissant, deux fois : décroissant, trois fois : plus de tri).
+ *  Il range les articles à l'intérieur de chaque rayon ; il est retenu sur l'appareil. */
+function triActuel() { try { const x = JSON.parse(lireStockage('sd_tri') || 'null'); return x && x.k ? x : null; } catch (e) { return null; } }
+function changerTri(k, redessiner) {
+  const tr = triActuel();
+  const suivant = !tr || tr.k !== k ? { k, sens: 1 } : tr.sens === 1 ? { k, sens: -1 } : null;
+  ecrireStockage('sd_tri', suivant ? JSON.stringify(suivant) : null);
+  redessiner();
+}
+function trier(articles) {
+  const tr = triActuel();
+  if (!tr) return articles;
+  const c = tr.k === 'article' ? { tri: (t, o) => o.nom_court || o.nom || o.ref } : COLONNES_TOUTES.find(x => x.k === tr.k);
+  if (!c) return articles;
+  const v = x => { const y = c.tri(x.t, x.o); return y === undefined || y === null || y === '' ? null : y; };
+  return [...articles].sort((a, b) => {
+    const x = v(a), y = v(b);
+    if (x === null || y === null) return (x === null) - (y === null);      // les cases vides toujours à la fin
+    const r = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'fr', { numeric: true });
+    return r * tr.sens;
+  });
+}
+
+/** ☰ Colonnes : cocher ce qu'on veut voir, ranger avec ↑ ↓. */
+function fenetreColonnes(apres) {
+  let choix = colonnesChoisies().map(c => c.k);
+  const liste = el('div');
+  function dessiner() {
+    vider(liste);
+    const ordre = [...choix, ...COLONNES_TOUTES.map(c => c.k).filter(k => !choix.includes(k))];
+    ordre.forEach(k => {
+      const c = COLONNES_TOUTES.find(x => x.k === k);
+      const i = choix.indexOf(k), on = i >= 0;
+      liste.append(ajouterA(el('div', { class: 'ligne-colonne' }),
+        el('label', { class: 'case etire' },
+          el('input', { type: 'checkbox', checked: on, onchange: ev => { if (ev.target.checked) choix.push(k); else choix = choix.filter(x => x !== k); dessiner(); } }),
+          c.titre),
+        on ? el('button', { class: 'petit', disabled: i === 0, onclick: () => { [choix[i - 1], choix[i]] = [choix[i], choix[i - 1]]; dessiner(); } }, '↑') : null,
+        on ? el('button', { class: 'petit', disabled: i === choix.length - 1, onclick: () => { [choix[i + 1], choix[i]] = [choix[i], choix[i + 1]]; dessiner(); } }, '↓') : null));
+    });
+  }
+  dessiner();
+  const msg = el('p', { class: 'erreur' });
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, 'Colonnes du tableau'),
+    el('p', { class: 'aide' }, '« Article » reste toujours la première colonne. Coche ce que tu veux voir et range avec ↑ ↓. C\'est retenu sur ton compte, sur tous tes appareils. Pour trier, touche le titre d\'une colonne dans le tableau. Une colonne nouvelle (une information qui n\'existe pas encore) : demande-la dans ✎ Idées.'),
+    liste, msg,
+    el('button', { class: 'principal', onclick: async ev => {
+      const b = ev.currentTarget; b.disabled = true;
+      try { await enregistrerColonnes(choix); fermerFenetre(); apres(); } catch (e) { msg.textContent = e.message; b.disabled = false; }
+    } }, 'Enregistrer'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => { choix = [...COLONNES_ORIGINE]; dessiner(); } }, 'Remettre comme au début'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')),
+    { fixe: true });
+}
+
+/** « + Nouvel article » (ajouter une ligne) : d'abord le type, puis le même formulaire que ⚙. */
+function nouvelArticle() {
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, 'Nouvel article : quel type ?'),
+    [['accessoires', 'Accessoire (pièces, cartons, niveau…)'], ['bobines', 'Bobine'], ['descentes', 'Descente']].map(([t, lib]) =>
+      el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => editeurArticle(t, null) }, lib)),
+    el('button', { class: 'second', style: 'width:100%;margin-top:16px', onclick: fermerFenetre }, 'Annuler')));
+}
 
 function seuilTexte(t, o) {
   if (t === 'accessoires' && o.mode === 'niveau') return '1/3';
@@ -806,6 +935,10 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
   }
   const blocs = e.enfants.map(collecter).filter(Boolean);
   if (!blocs.length) return null;
+  const cols = colonnesChoisies();
+  const nCol = cols.length + 2;          // + Article (au début) et ⚙ (à la fin)
+  const tr = triActuel();
+  const fleche = k => tr && tr.k === k ? (tr.sens === 1 ? ' ▲' : ' ▼') : '';
   const corpsT = el('tbody');
   function rendre(b, niveau) {
     const cle = 'z:' + b.z.id;
@@ -813,35 +946,31 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
     const nAlerte = b.articles.filter(x => enAlerte(statut(x.t, x.o))).length;
     const nb = b.articles.length;
     corpsT.append(el('tr', { class: 'groupe', onclick: () => { if (ouvert) etat.ouverts.delete(cle); else etat.ouverts.add(cle); redessiner(); } },
-      el('td', { colspan: COLONNES.length },
+      el('td', { colspan: nCol },
         el('span', { class: 'colle', style: `padding-left:${niveau * 18}px` }, `${ouvert ? '▾' : '▸'} ${b.z.id} · ${b.z.libelle || ''}`,
           el('span', { class: 'compte' + (nAlerte ? ' alerte' : '') }, nAlerte ? `${nAlerte} à signaler` : `${nb} article${nb > 1 ? 's' : ''}`)))));
     if (!ouvert) return;
     if (b.sous) b.sous.forEach(s => rendre(s, niveau + 1));
-    else b.articles.forEach(x => corpsT.append(...ligneTableau(x.t, x.o)));
+    else trier(b.articles).forEach(x => corpsT.append(...ligneTableau(x.t, x.o, cols)));
   }
   blocs.forEach(b => rendre(b, 0));
+  const titre = (k, texte, classe) => el('th', { class: 'triable' + (classe ? ' ' + classe : ''), title: 'Trier', onclick: () => changerTri(k, redessiner) }, texte + fleche(k));
   return el('div', { class: 'tableau-cadre' },
     el('table', { class: 'tableau' },
-      el('thead', {}, el('tr', {}, COLONNES.map((c, i) => el('th', { class: i === 0 ? 'col1' : '' }, c)))),
+      el('thead', {}, el('tr', {}, titre('article', 'Article', 'col1'), cols.map(c => titre(c.k, c.titre)), el('th', {}, ''))),
       corpsT));
 }
 
 /** Une ligne d'article ; la toucher ouvre le détail juste dessous (comme en dossiers). */
-function ligneTableau(t, o) {
+function ligneTableau(t, o, cols) {
   const s = statut(t, o);
   const contenu = el('div', { class: 'detail colle' });
-  const detail = el('tr', { class: 'detail-ligne', hidden: true }, el('td', { colspan: COLONNES.length }, contenu));
+  const detail = el('tr', { class: 'detail-ligne', hidden: true }, el('td', { colspan: cols.length + 2 }, contenu));
   const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : ''), onclick: () => {
     detail.hidden = !detail.hidden; if (!detail.hidden) remplirDetail(contenu, t, o);
   } },
     el('td', { class: 'col1', title: o.nom || o.ref }, o.nom_court || o.nom || o.ref),
-    el('td', { class: 'ref' }, o.ref || o.id),
-    el('td', { class: 'nombre' }, valeurCourte(t, o) || '—'),
-    el('td', {}, pastille(s)),
-    el('td', {}, seuilTexte(t, o)),
-    el('td', {}, o.fournisseur || '—'),
-    el('td', {}, o.compte ? jour(o.compte) : '—'),
+    cols.map(c => el('td', { class: c.classe || '' }, c.val(t, o))),
     el('td', { class: 'roue-case' }, boutonRoue(t, o)));
   return [ligne, detail];
 }
@@ -1378,7 +1507,8 @@ async function pageComptes(corps) {
   const choixAffichage = el('div', { class: 'puces' }, [['tableau', 'Tableau (façon Excel)'], ['dossiers', 'Dossiers']].map(([k, lib]) =>
     el('button', { class: affichageStock() === k ? 'actif' : '', onclick: () => { ecrireStockage('sd_affichage', k); principal('comptes'); } }, lib)));
   corps.append(
-    el('div', { class: 'titre-section', style: 'margin-top:4px' }, 'Type d\'affichage du stock'),
+    el('h2', { style: 'margin:4px 0 0' }, '⚙︎ Réglages'),
+    el('div', { class: 'titre-section', style: 'margin-top:12px' }, 'Type d\'affichage du stock'),
     choixAffichage,
     el('p', { class: 'aide' }, 'Tableau : une ligne par article, en colonnes ; les zones se plient et se déplient. Dossiers : des cartes par zone. Le choix est retenu sur cet appareil.'),
     el('div', { class: 'titre-section' }, 'Comptes du site'));
