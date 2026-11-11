@@ -375,6 +375,7 @@ async function demarrer() {
     const e = await rpc('etat_navigateur', moi());
     if (!e.connecte) return ecranConnexion();
     etat.identifiant = e.identifiant;
+    etat.admin = !!e.admin;          // la coche admin : comptes, coches admin (réservés aux admins)
     if (e.a_changer) return ecranChangement(true);
     if (!e.autorise) return ecranCode();
     // Rappel du mot de passe (Sanji : « une question à la première connexion, pour ne pas l'oublier ; s'ils ne veulent pas, ils refusent »)
@@ -2344,27 +2345,41 @@ async function pageComptes(corps) {
     el('div', { class: 'titre-section', style: 'margin-top:12px' }, 'Type d\'affichage du stock'),
     choixAffichage,
     el('p', { class: 'aide' }, 'Tableau : une ligne par article, en colonnes ; les zones se plient et se déplient. Dossiers : des cartes par zone. Le choix est retenu sur cet appareil.'),
-    el('div', { class: 'titre-section' }, 'Comptes du site'));
-  corps.append(el('p', { class: 'aide' }, 'Les comptes du site. Pour un oubli : donne un mot de passe provisoire (à dire à l\'oral) ; la personne choisira le sien en se connectant. Personne ne peut lire un mot de passe.'));
-  const liste = el('div', {}, el('p', { class: 'aide' }, 'Chargement…'));
-  corps.append(liste,
-    el('button', { class: 'principal', onclick: () => fenetreCompte(null) }, '+ Nouveau compte'),
-    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => ecranChangement(false) }, 'Changer mon mot de passe ou mon identifiant'),
+    el('div', { class: 'titre-section' }, 'Mon compte'),
+    el('p', {}, el('strong', {}, etat.identifiant || '?'), etat.admin ? ' · admin' : ' · magasinier'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:4px', onclick: () => ecranChangement(false) }, 'Changer mon mot de passe ou mon identifiant'),
+    el('div', { class: 'titre-section' }, 'Comptes (site et appli)'));
+  // Sanji, 11/11 : les comptes et la coche admin sont réservés aux admins (« un admin minimum est obligatoire »)
+  const liste = el('div', {}, el('p', { class: 'aide' }, etat.admin ? 'Chargement…' : 'Réservé aux admins : demande à Yannick.'));
+  ajouterA(corps,
+    etat.admin ? el('p', { class: 'aide' }, 'Pour un oubli : donne un mot de passe provisoire (à dire à l\'oral) ; la personne choisira le sien en se connectant. Personne ne peut lire un mot de passe. Un admin peut aussi changer le code magasinier et retirer un appareil (dans l\'appli).') : null,
+    liste,
+    etat.admin ? el('button', { class: 'principal', onclick: () => fenetreCompte(null) }, '+ Nouveau compte') : null,
     blocAppareils(),
     // Sanji, 11/11 : « Sortir » devient « Déconnexion », en bas de Comptes
     el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: () => {
       if (confirm('Te déconnecter de cet appareil ? Il faudra retaper ton identifiant et ton mot de passe.')) seDeconnecter();
     } }, 'Déconnexion'));
+  if (!etat.admin) return;
   try {
     const r = await rpc('liste_comptes', moi());
     vider(liste);
     if (!r.ok) { liste.append(el('p', { class: 'erreur' }, r.message)); return; }
     (r.comptes || []).forEach(c => liste.append(el('div', { class: 'carte' },
-      el('div', { style: 'font-weight:700' }, c.identifiant + (c.moi ? ' (moi)' : '')),
+      el('div', { style: 'font-weight:700' }, c.identifiant + (c.admin ? ' · admin' : '') + (c.moi ? ' (moi)' : '')),
       el('div', { class: 'aide' }, [c.a_changer ? 'doit encore choisir son mot de passe' : 'mot de passe choisi', c.appareils ? `connecté sur ${c.appareils} appareil(s)` : null, c.cree_par ? `créé par ${c.cree_par}` : null].filter(Boolean).join(' · ')),
-      c.moi ? null : el('div', { class: 'rangee', style: 'margin-top:8px' },
-        el('button', { class: 'petit', onclick: () => fenetreCompte(c) }, 'Mot de passe provisoire'),
-        el('button', { class: 'petit danger', onclick: async () => {
+      el('div', { class: 'rangee', style: 'margin-top:8px' },
+        c.moi ? null : el('button', { class: 'petit', onclick: () => fenetreCompte(c) }, 'Mot de passe provisoire'),
+        // La coche admin : un admin la donne ou la retire ; le document refuse de retirer le dernier admin
+        el('label', { class: 'case', style: 'margin:0' },
+          el('input', { type: 'checkbox', checked: !!c.admin, onchange: async ev => {
+            const voulu = ev.target.checked;
+            if (!confirm(voulu ? `« ${c.identifiant} » devient admin ? (code magasinier, comptes, retirer un appareil)` : `« ${c.identifiant} » n'est plus admin ?`)) { ev.target.checked = !voulu; return; }
+            try { const x = await rpc('definir_admin', { ...moi(), p_compte: c.id, p_admin: voulu }); alert(x.message); }
+            catch (e) { alert(e.message); }
+            if (c.moi && !voulu) await demarrer(); else principal('comptes');
+          } }), 'Admin'),
+        c.moi ? null : el('button', { class: 'petit danger', onclick: async () => {
           if (!confirm(`Retirer le compte « ${c.identifiant} » ? Il ne pourra plus se connecter.`)) return;
           const x = await rpc('desactiver_compte', { ...moi(), p_compte: c.id }); alert(x.message); principal('comptes');
         } }, 'Retirer')))));
@@ -2403,7 +2418,7 @@ function blocAppareils() {
             catch (e) { alert(e.message); }
           } }, 'Renommer')));
       });
-      zone.append(el('p', { class: 'aide', style: 'margin-top:8px' }, 'Pour retirer un appareil (perdu, changé…) : dans l\'appli de Yannick, avec le code magasinier.'));
+      zone.append(el('p', { class: 'aide', style: 'margin-top:8px' }, 'Pour retirer un appareil (perdu, changé…) : dans l\'appli, par un admin, avec le code magasinier.'));
     } catch (e) { vider(zone).append(el('p', { class: 'erreur' }, e.message)); }
   }
   const det = el('details', { class: 'dossier', style: 'margin-top:16px', ontoggle: () => { if (det.open && !charge) { charge = true; charger(); } } },
