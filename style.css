@@ -159,6 +159,7 @@ img.dessin { display: block; max-width: 100%; margin-top: 8px; border-radius: 8p
 /* Kits */
 .kit { display: flex; gap: 12px; align-items: flex-start; }
 .kit .coche { font-size: 22px; line-height: 1; color: var(--accent); }
+.kit input.coche-dep { width: 24px; height: 24px; margin: 2px 0 0; flex: none; cursor: pointer; accent-color: var(--accent); }
 .kit .contenu { flex: 1; min-width: 0; }
 .ligne-panier { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--ligne); }
 .ligne-panier .etire { flex: 1; min-width: 0; }

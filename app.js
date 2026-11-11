@@ -235,7 +235,7 @@ function mouvementTexte(m) {
     // Kits déploiement (départs et retours par employé)
     case 'depart': return (m.bobines ? `Parti : ${n} bobine(s) (${mm} ml)` : `Parti : −${n}${unite}`) + qui + (m.motif ? ` · ${m.motif}` : '')
       + (m.niveau_inchange ? ' (niveau inchangé)' : '');
-    case 'depart_retour': return m.annule ? `Départ supprimé (erreur) : tout revient${qui}`
+    case 'depart_retour': return m.annule ? `Départ annulé : tout revient${qui}`
       : m.bobines ? `Retour : ${nombreJoli(num(m.retour) || 0)} ml revenus sur ${mm} ml${qui}` : `Retour : +${n}${unite}${qui}`;
     default: return m.type || 'Mouvement';
   }
@@ -1446,12 +1446,53 @@ function carteDep(d) {
     : d.statut === 'parti' ? `parti le ${jourHeure(d.depart_le)}${d.depart_par ? ' (noté par ' + d.depart_par + ')' : ''}`
     : d.interne ? `le ${jourHeure(d.depart_le)}${d.depart_par ? ' (noté par ' + d.depart_par + ')' : ''}`
     : `rentré le ${jourHeure(d.retour_le)}${d.retour_par ? ' (noté par ' + d.retour_par + ')' : ''}`;
+  // Sanji : « possibilité de cocher prêt comme pour les kits client » : vide = prévu, cochée = parti
+  const coche = d.statut === 'rentre' ? el('div', { class: 'coche' }, '✓')
+    : el('input', { type: 'checkbox', class: 'coche-dep', checked: d.statut === 'parti', title: prevu ? 'Cocher : ils partent' : 'Décocher : il repasse prévu',
+        onclick: ev => { ev.stopPropagation(); ev.preventDefault(); basculerDep(d); } });
   return el('div', { class: 'carte kit', style: 'cursor:pointer', onclick: () => prevu ? editeurDepart(d, {}) : fenetreDep(d) },
-    el('div', { class: 'coche' }, prevu ? '◷' : d.statut === 'parti' ? '↗' : '✓'),
+    coche,
     el('div', { class: 'contenu' },
       el('div', { style: 'font-weight:700' }, nomDep(d)),
       el('div', { class: 'aide' }, `${n} article${n > 1 ? 's' : ''} · ${quand}`),
       d.note ? el('div', { style: 'color:var(--accent);font-size:14px' }, d.note) : null));
+}
+
+/**
+ * La coche, comme les kits vente (Sanji : « si les patrons me les préremplissent, j'aurais juste à appliquer comme pour
+ * un kit client ») : un prévu coché = ils partent (le stock baisse) ; un parti décoché = il repasse prévu (tout revient).
+ */
+async function basculerDep(d0) {
+  const d = trouver('deploiements', d0.id) || d0;
+  try {
+    if (d.statut === 'prevu') {
+      const lignes = d.lignes || [];
+      if (!lignes.length) { alert('Ce départ est vide : ouvre-le pour ajouter des articles.'); return; }
+      if (!(d.employes || []).length) { alert('Personne n\'est choisi : ouvre-le pour dire qui part.'); return; }
+      const resume = lignes.map(l => { const o = trouver(l.t, l.id); return `• ${nombreJoli(num(l.n) ?? 1)} ${uniteLigne(l.t, o, l.u)} · ${o ? (o.nom_court || o.nom) : l.id}`; }).join('\n');
+      if (!confirm(`« ${nomDep(d)} » est prêt ? Ils partent, le stock baisse de :\n${resume}`)) return;
+      if (await partirPrevu(d)) principal('kits');
+    } else if (d.statut === 'parti') {
+      if (!confirm(`« ${nomDep(d)} » n'est plus parti ? Ce qu'il avait pris revient en stock, et il repasse en « prévu ».\n(Pour un vrai retour, avec ce qui a été utilisé : ouvre-le, puis « Retour ».)`)) return;
+      const tout = (d.preleve || []).map(p => p.t === 'bobines' ? (p.metres || []).map(Number) : (num(p.voulu) ?? num(p.n) ?? 0));
+      await appliquerRetour(d, tout, false, true);
+      principal('kits');
+    }
+  } catch (e) { alert(e.message); }
+}
+
+/** Le départ d'un prévu tel qu'il a été préparé (les bobines choisies à l'avance, ou les suivantes si elles ne sont plus là). */
+async function partirPrevu(d0) {
+  await chargerTout();                            // le stock frais, juste avant d'y toucher
+  const d = trouver('deploiements', d0.id) || d0;
+  const lignes = d.lignes || [];
+  const manques = calculerManques(lignes);
+  if (manques.length && !confirm(`Il en manque :\n${manques.join('\n')}\n\nOn prend ce qu'il y a, et ces articles passent en « À signaler » rouge vif. Continuer ?`)) return false;
+  const quand = new Date().toISOString();
+  const { lot, preleve } = mouvementsDepart(d.id, (d.employes || []).join(' + '), d.motif || null, lignes, quand);
+  lot.push({ table: 'deploiements', id: d.id, champs: { statut: 'parti', preleve, depart_le: quand, depart_par: etat.identifiant } });
+  await ecrireLot(lot);
+  return true;
 }
 
 /** Un déploiement : ce qui est parti (et revenu) ; s'il est dehors : Retour, Ils prennent encore, Supprimer (erreur). */
@@ -1752,8 +1793,11 @@ function fenetreRetour(d0) {
     { fixe: true });
 }
 
-/** Le retour : le stock remonte de ce qui revient ; le déploiement passe « rentré » (supprimer : erreur de saisie, tout revient). */
-async function appliquerRetour(d0, valeurs, supprimer) {
+/**
+ * Le retour : le stock remonte de ce qui revient ; le déploiement passe « rentré ». supprimer : erreur de saisie, tout revient
+ * et il part à la corbeille ; remettrePrevu : décoché, tout revient et il repasse prévu.
+ */
+async function appliquerRetour(d0, valeurs, supprimer, remettrePrevu) {
   await chargerTout();
   const d = trouver('deploiements', d0.id) || d0;
   const qui = (d.employes || []).join(' + ') || null;
@@ -1767,7 +1811,7 @@ async function appliquerRetour(d0, valeurs, supprimer) {
     const cle = p.t + '|' + p.id;
     if (!parArticle.has(cle)) parArticle.set(cle, { t: p.t, id: o.id, champs: {}, metres: metres(o).slice(), sorties: sorties(o).slice() });
     const a = parArticle.get(cle);
-    const mvt = { type: 'depart_retour', dep: d.id, ouvrier: qui, quand, par: etat.identifiant, ...(supprimer ? { annule: true } : {}) };
+    const mvt = { type: 'depart_retour', dep: d.id, ouvrier: qui, quand, par: etat.identifiant, ...(supprimer || remettrePrevu ? { annule: true } : {}) };
     if (p.t === 'bobines') {
       const restes = (Array.isArray(v) ? v : []).map(Number);
       (p.metres || []).forEach((m, j) => {
@@ -1797,7 +1841,9 @@ async function appliquerRetour(d0, valeurs, supprimer) {
     retour.push({ t: p.t, id: p.id, champ: p.champ, n });
   });
   const lot = [...parArticle.values()].filter(a => Object.keys(a.champs).length).map(a => ({ table: a.t, id: a.id, champs: a.champs }));
-  lot.push({ table: 'deploiements', id: d.id, champs: { statut: 'rentre', retour, retour_le: quand, retour_par: etat.identifiant, ...(supprimer ? { supprime: true } : {}) } });
+  lot.push({ table: 'deploiements', id: d.id, champs: remettrePrevu
+    ? { statut: 'prevu', preleve: [], retour: null, depart_le: null, depart_par: null }
+    : { statut: 'rentre', retour, retour_le: quand, retour_par: etat.identifiant, ...(supprimer ? { supprime: true } : {}) } });
   await ecrireLot(lot);
 }
 
