@@ -14,8 +14,8 @@ const CONFIG = {
   url: 'https://phrdduaciipoxvodfzth.supabase.co',
   cle: 'sb_publishable_On7Xm61ra2aDalj1RiBzeg_gWJYdXAg',
 };
-// carnet : la liste des fournisseurs, pour « Modifier l'article » (⚙)
-const TABLES = ['accessoires', 'bobines', 'descentes', 'zones', 'reglages', 'kits', 'demandes', 'carnet'];
+// carnet : les fournisseurs (⚙ Modifier l'article) et les employés (kits déploiement)
+const TABLES = ['accessoires', 'bobines', 'descentes', 'zones', 'reglages', 'kits', 'demandes', 'carnet', 'deploiements'];
 const ARTICLES = ['accessoires', 'bobines', 'descentes'];
 
 // ------------------------------------------------------------------ petits outils
@@ -109,6 +109,27 @@ async function ecrire(table, id, champs) {
   Object.assign(o, champs);
 }
 
+/** Plusieurs écritures d'un coup (un départ ou un retour de déploiement : les articles et le déploiement ensemble). */
+async function ecrireLot(lot) {
+  if (!lot.length) return;
+  const ts = new Date().toISOString();
+  const r = await rpc('appliquer_modifications', {
+    modifs: lot.map(x => ({ table: x.table, id: x.id, champs: x.champs, ts, par: etat.identifiant, appareil: APP.id })),
+    p_jeton: APP.jeton,
+  });
+  const res = (r && r.resultats) || [];
+  const erreurs = res.filter(x => x.erreur).map(x => `${x.id} : ${x.erreur}`);
+  lot.forEach((x, i) => {
+    if (res[i] && res[i].erreur) return;
+    const liste = etat.donnees[x.table] || (etat.donnees[x.table] = []);
+    let o = liste.find(y => y.id === x.id);
+    if (!o) { o = { id: x.id }; liste.push(o); }
+    Object.assign(o, x.champs);
+  });
+  if (!res.length) throw new Error('Pas de réponse du document');
+  if (erreurs.length) throw new Error('Pas tout enregistré : ' + erreurs.join(' ; '));
+}
+
 // ------------------------------------------------------------------ règles (les mêmes que l'appli)
 
 const tous = t => (etat.donnees[t] || []).filter(o => !o.supprime);
@@ -163,7 +184,7 @@ function disponible(t, o, u) {
 function texteManque(o) {
   const m = o.manque;
   if (!m) return null;
-  return `Il a manqué ${m.n ? nombreJoli(num(m.n)) + ' ' : ''}pour un kit, le ${jourHeure(m.quand)}${m.par ? ' (' + m.par + ')' : ''}`;
+  return `Il a manqué ${m.n ? nombreJoli(num(m.n)) + ' ' : ''}pour ${m.dep ? 'un départ' : 'un kit'}, le ${jourHeure(m.quand)}${m.par ? ' (' + m.par + ')' : ''}`;
 }
 
 function valeurCourte(tab, o) {
@@ -211,6 +232,11 @@ function mouvementTexte(m) {
     case 'bobine_neuve': return `Bobine neuve de ${mm} ml`;
     case 'kit': return m.bobines ? `Parti dans un kit : ${n} bobine(s) (${mm} ml)` : `Parti dans un kit : −${n}${unite}`;
     case 'kit_retour': return `Revenu d'un kit : +${n}${unite}`;
+    // Kits déploiement (départs et retours par employé)
+    case 'depart': return (m.bobines ? `Parti : ${n} bobine(s) (${mm} ml)` : `Parti : −${n}${unite}`) + qui + (m.motif ? ` · ${m.motif}` : '')
+      + (m.niveau_inchange ? ' (niveau inchangé)' : '');
+    case 'depart_retour': return m.annule ? `Départ supprimé (erreur) : tout revient${qui}`
+      : m.bobines ? `Retour : ${nombreJoli(num(m.retour) || 0)} ml revenus sur ${mm} ml${qui}` : `Retour : +${n}${unite}${qui}`;
     default: return m.type || 'Mouvement';
   }
 }
@@ -407,7 +433,20 @@ function ecranRappel() {
 const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['idees', '✎ Idées']];
 
 function principal(onglet) {
+  // Sanji : « quand je clique sur un nom de colonne pour trier, il me redécale tout à gauche » : on garde la place
+  // (la page, et le défilement de chaque tableau) quand on redessine le même onglet
+  const memeOnglet = etat.onglet === (onglet || 'stock') && !!document.querySelector('main');
+  const yAvant = window.scrollY;
+  const cadresAvant = [...document.querySelectorAll('.tableau-cadre')].map(c => [c.scrollLeft, c.scrollTop]);
   etat.onglet = onglet || 'stock';
+  principalDessiner();
+  if (memeOnglet) {
+    [...document.querySelectorAll('.tableau-cadre')].forEach((c, i) => { if (cadresAvant[i]) { c.scrollLeft = cadresAvant[i][0]; c.scrollTop = cadresAvant[i][1]; } });
+    window.scrollTo(0, yAvant);
+  }
+}
+
+function principalDessiner() {
   const nKits = tous('kits').filter(k => !k.pret).length;
   const nSig = ARTICLES.reduce((a, t) => a + tous(t).filter(o => ['SIGNALER', 'MANQUE'].includes(statut(t, o))).length, 0);
   // Sanji, 11/11 : le ⚠ en rouge → pastille rouge vif (comme « manque »), lisible sur l'en-tête bleu, de jour comme de nuit.
@@ -443,7 +482,7 @@ async function rafraichir() {
 
 // Relecture toutes les 2 minutes quand la page est à l'écran (et qu'aucune fenêtre n'est ouverte)
 setInterval(() => {
-  if (document.visibilityState === 'visible' && etat.charge && !etat.fenetre && document.activeElement?.tagName !== 'INPUT') rafraichir();
+  if (document.visibilityState === 'visible' && etat.charge && !etat.fenetre && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) rafraichir();
 }, 120000);
 
 // ------------------------------------------------------------------ Stock
@@ -771,6 +810,15 @@ function pageStock(corps) {
     return { vue: d, articles };
   }
   function dessiner() {
+    // On garde la place de chaque tableau (défilement de côté et vers le bas) quand on le redessine (tri, dépliage, case modifiée)
+    const cadresAvant = [...liste.querySelectorAll('.tableau-cadre')].map(c => [c.scrollLeft, c.scrollTop]);
+    const yAvant = window.scrollY;
+    dessinerListe();
+    [...liste.querySelectorAll('.tableau-cadre')].forEach((c, i) => { if (cadresAvant[i]) { c.scrollLeft = cadresAvant[i][0]; c.scrollTop = cadresAvant[i][1]; } });
+    if (cadresAvant.length) window.scrollTo(0, yAvant);
+  }
+  etat.redessinerStock = dessiner;
+  function dessinerListe() {
     vider(liste);
     let rien = true;
     const enTableau = affichageStock() === 'tableau';
@@ -795,7 +843,8 @@ function pageStock(corps) {
   // « + Nouvel article » (ajouter une ligne) ; en tableau, « ☰ Colonnes » (la disposition de chacun)
   const outils = ajouterA(el('div', { class: 'rangee', style: 'margin-bottom:10px' }),
     el('button', { class: 'second etire', onclick: nouvelArticle }, '+ Nouvel article'),
-    affichageStock() === 'tableau' ? el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, '☰ Colonnes') : null);
+    // Sanji : « en Excel, la roue crantée c'est pour ajouter des colonnes et autres réglages »
+    el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'));
   corps.append(outils, champ, puces, liste);
 }
 
@@ -872,29 +921,40 @@ function trier(articles) {
   });
 }
 
-/** ☰ Colonnes : cocher ce qu'on veut voir, ranger avec ↑ ↓. */
+/** ⚙ du tableau : le type d'affichage, et les colonnes (cocher ce qu'on veut voir, ranger en glissant ☰ ou avec ↑ ↓). */
 function fenetreColonnes(apres) {
   let choix = colonnesChoisies().map(c => c.k);
   const liste = el('div');
+  const typeAffichage = el('div', { class: 'puces' }, [['tableau', 'Tableau (façon Excel)'], ['dossiers', 'Dossiers']].map(([k, lib]) =>
+    el('button', { class: affichageStock() === k ? 'actif' : '', onclick: () => { ecrireStockage('sd_affichage', k); fermerFenetre(); apres(); } }, lib)));
   function dessiner() {
     vider(liste);
     const ordre = [...choix, ...COLONNES_TOUTES.map(c => c.k).filter(k => !choix.includes(k))];
     ordre.forEach(k => {
       const c = COLONNES_TOUTES.find(x => x.k === k);
       const i = choix.indexOf(k), on = i >= 0;
-      liste.append(ajouterA(el('div', { class: 'ligne-colonne' }),
+      const ligne = ajouterA(el('div', { class: 'ligne-colonne' + (on ? '' : ' eteinte'), 'data-k': k }),
+        on ? el('span', { class: 'poignee', title: 'Glisser pour ranger' }, '☰') : el('span', { class: 'poignee vide' }),
         el('label', { class: 'case etire' },
           el('input', { type: 'checkbox', checked: on, onchange: ev => { if (ev.target.checked) choix.push(k); else choix = choix.filter(x => x !== k); dessiner(); } }),
           c.titre),
         on ? el('button', { class: 'petit', disabled: i === 0, onclick: () => { [choix[i - 1], choix[i]] = [choix[i], choix[i - 1]]; dessiner(); } }, '↑') : null,
-        on ? el('button', { class: 'petit', disabled: i === choix.length - 1, onclick: () => { [choix[i + 1], choix[i]] = [choix[i], choix[i + 1]]; dessiner(); } }, '↓') : null));
+        on ? el('button', { class: 'petit', disabled: i === choix.length - 1, onclick: () => { [choix[i + 1], choix[i]] = [choix[i], choix[i + 1]]; dessiner(); } }, '↓') : null);
+      if (on) glisserLigne(ligne, liste, () => {
+        choix = [...liste.querySelectorAll('.ligne-colonne:not(.eteinte)')].map(x => x.dataset.k);
+        dessiner();
+      });
+      liste.append(ligne);
     });
   }
   dessiner();
   const msg = el('p', { class: 'erreur' });
   ouvrirFenetre(el('div', {},
-    el('h2', {}, 'Colonnes du tableau'),
-    el('p', { class: 'aide' }, '« Article » reste toujours la première colonne. Coche ce que tu veux voir et range avec ↑ ↓. C\'est retenu sur ton compte, sur tous tes appareils. Pour trier, touche le titre d\'une colonne dans le tableau. Une colonne nouvelle (une information qui n\'existe pas encore) : demande-la dans ✎ Idées.'),
+    el('h2', {}, '⚙︎ Affichage du stock'),
+    el('div', { class: 'titre-section', style: 'margin-top:10px' }, 'Type d\'affichage'),
+    typeAffichage,
+    el('div', { class: 'titre-section' }, 'Colonnes du tableau'),
+    el('p', { class: 'aide' }, '« Article » reste toujours la première colonne. Coche ce que tu veux voir ; range en glissant ☰ (ou avec ↑ ↓). Dans le tableau, tu peux aussi glisser le titre d\'une colonne pour la déplacer, et le toucher pour trier. C\'est retenu sur ton compte, sur tous tes appareils. Une colonne nouvelle (une information qui n\'existe pas encore) : demande-la dans ✎ Idées.'),
     liste, msg,
     el('button', { class: 'principal', onclick: async ev => {
       const b = ev.currentTarget; b.disabled = true;
@@ -937,7 +997,7 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
   const blocs = e.enfants.map(collecter).filter(Boolean);
   if (!blocs.length) return null;
   const cols = colonnesChoisies();
-  const nCol = cols.length + 2;          // + Article (au début) et ⚙ (à la fin)
+  const nCol = cols.length + 1;          // + Article (au début)
   const tr = triActuel();
   const fleche = k => tr && tr.k === k ? (tr.sens === 1 ? ' ▲' : ' ▼') : '';
   const corpsT = el('tbody');
@@ -956,25 +1016,276 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
     else trier(b.articles).forEach(x => corpsT.append(...ligneTableau(x.t, x.o, cols)));
   }
   blocs.forEach(b => rendre(b, 0));
-  const titre = (k, texte, classe) => el('th', { class: 'triable' + (classe ? ' ' + classe : ''), title: 'Trier', onclick: () => changerTri(k, redessiner) }, texte + fleche(k));
+  // Le titre d'une colonne : le toucher trie ; le glisser déplace la colonne (Sanji : « changer l'ordre des colonnes par simple glisser-déposer »)
+  const titre = (k, texte, classe) => {
+    const th = el('th', { class: 'triable' + (classe ? ' ' + classe : ''), 'data-k': k === 'article' ? null : k,
+      title: k === 'article' ? 'Trier' : 'Toucher : trier · glisser : déplacer la colonne',
+      onclick: () => { if (th.dataset.glisse) { delete th.dataset.glisse; return; } changerTri(k, redessiner); } }, texte + fleche(k));
+    if (k !== 'article') glisserColonne(th, k, cols, redessiner);
+    return th;
+  };
   return el('div', { class: 'tableau-cadre' },
     el('table', { class: 'tableau' },
-      el('thead', {}, el('tr', {}, titre('article', 'Article', 'col1'), cols.map(c => titre(c.k, c.titre)), el('th', {}, ''))),
+      el('thead', {}, el('tr', {}, titre('article', 'Article', 'col1'), cols.map(c => titre(c.k, c.titre)))),
       corpsT));
 }
 
-/** Une ligne d'article ; la toucher ouvre le détail juste dessous (comme en dossiers). */
+/** Glisser le titre d'une colonne sur une autre pour la déplacer (souris et doigt) ; c'est retenu sur le compte. */
+function glisserColonne(th, k, cols, redessiner) {
+  th.addEventListener('pointerdown', ev => {
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    const x0 = ev.clientX;
+    let glisse = false;
+    const titres = () => [...th.parentElement.querySelectorAll('th[data-k]')];
+    const dessous = e => titres().find(x => { const r = x.getBoundingClientRect(); return e.clientX >= r.left && e.clientX < r.right; });
+    const finir = () => {
+      th.removeEventListener('pointermove', bouger); th.removeEventListener('pointerup', lacher); th.removeEventListener('pointercancel', finir);
+      titres().forEach(x => x.classList.remove('cible', 'glisse'));
+    };
+    const bouger = e => {
+      if (!glisse) { if (Math.abs(e.clientX - x0) < 10) return; glisse = true; th.classList.add('glisse'); }
+      const c = dessous(e);
+      titres().forEach(x => x.classList.toggle('cible', x === c && x !== th));
+    };
+    const lacher = async e => {
+      finir();
+      if (!glisse) return;               // un simple toucher : c'est le tri
+      th.dataset.glisse = '1';           // le « clic » qui suit le lâcher ne trie pas
+      const c = dessous(e);
+      if (!c || c === th) return;
+      const ordre = cols.map(x => x.k);
+      const de = ordre.indexOf(k), vers = ordre.indexOf(c.dataset.k);
+      if (de < 0 || vers < 0) return;
+      ordre.splice(vers, 0, ordre.splice(de, 1)[0]);
+      try { await enregistrerColonnes(ordre); } catch (err) { alert(err.message); }
+      redessiner();
+    };
+    try { th.setPointerCapture(ev.pointerId); } catch (e) { /* rien */ }
+    th.addEventListener('pointermove', bouger); th.addEventListener('pointerup', lacher); th.addEventListener('pointercancel', finir);
+  });
+}
+
+/** Glisser une ligne par sa poignée ☰ pour la ranger dans une liste (souris et doigt) ; fin() quand on la lâche. */
+function glisserLigne(ligne, liste, fin) {
+  const poignee = ligne.querySelector('.poignee');
+  poignee.addEventListener('pointerdown', ev => {
+    ev.preventDefault();
+    try { poignee.setPointerCapture(ev.pointerId); } catch (e) { /* rien */ }
+    ligne.classList.add('glisse');
+    const bouger = e => {
+      const autres = [...liste.querySelectorAll('.ligne-colonne:not(.eteinte)')].filter(x => x !== ligne);
+      const avant = autres.find(x => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (avant) { if (ligne.nextSibling !== avant) liste.insertBefore(ligne, avant); }
+      else if (autres.length) autres[autres.length - 1].after(ligne);
+    };
+    const lacher = () => {
+      poignee.removeEventListener('pointermove', bouger); poignee.removeEventListener('pointerup', lacher); poignee.removeEventListener('pointercancel', lacher);
+      ligne.classList.remove('glisse');
+      fin();
+    };
+    poignee.addEventListener('pointermove', bouger); poignee.addEventListener('pointerup', lacher); poignee.addEventListener('pointercancel', lacher);
+  });
+}
+
+/**
+ * Une ligne d'article. Sanji : « en Excel, modifiable directement dans la colonne sans passer par Modifier l'article » :
+ * toucher une case modifiable l'ouvre sur place (Entrée ou toucher ailleurs : enregistré ; Échap : annulé).
+ * Toucher le nom (ou une case qui ne se modifie pas) ouvre le détail, avec « Tout modifier / corbeille ».
+ */
 function ligneTableau(t, o, cols) {
   const s = statut(t, o);
   const contenu = el('div', { class: 'detail colle' });
-  const detail = el('tr', { class: 'detail-ligne', hidden: true }, el('td', { colspan: cols.length + 2 }, contenu));
-  const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : ''), onclick: () => {
-    detail.hidden = !detail.hidden; if (!detail.hidden) remplirDetail(contenu, t, o);
-  } },
+  const detail = el('tr', { class: 'detail-ligne', hidden: true }, el('td', { colspan: cols.length + 1 }, contenu));
+  const basculer = () => {
+    detail.hidden = !detail.hidden;
+    if (detail.hidden) return;
+    remplirDetail(contenu, t, o);
+    contenu.append(el('div', { class: 'rangee', style: 'margin-top:8px' },
+      el('button', { class: 'petit', onclick: ev => { ev.stopPropagation(); editeurArticle(t, o); } }, '⚙︎ Tout modifier, ou corbeille…')));
+  };
+  const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : ''), onclick: basculer },
     el('td', { class: 'col1', title: o.nom || o.ref }, o.nom_court || o.nom || o.ref),
-    cols.map(c => el('td', { class: c.classe || '' }, c.val(t, o))),
-    el('td', { class: 'roue-case' }, boutonRoue(t, o)));
+    cols.map(c => {
+      const modifiable = !!(EDITEURS[c.k] && EDITEURS[c.k](t, o));
+      const td = el('td', { class: (c.classe || '') + (modifiable ? ' modifiable' : ''), title: modifiable ? 'Toucher pour modifier' : null }, c.val(t, o));
+      if (modifiable) td.addEventListener('click', ev => { ev.stopPropagation(); editerCase(td, c, t, o); });
+      return td;
+    }));
   return [ligne, detail];
+}
+
+// ------------------------------------------------------------------ cases modifiables du tableau
+
+function optionsZones(o) {
+  const zs = tous('zones').filter(z => !z.est_groupe).sort((a, b) => triFr(String(a.id), String(b.id)));
+  const l = zs.map(z => [z.id, `${z.id} · ${z.libelle || ''}`]);
+  if (o.zone && !zs.some(z => z.id === o.zone)) l.push([o.zone, o.zone]);
+  return [[null, '— choisir —'], ...l];
+}
+function optionsFamilles(o) {
+  const fs = [...new Set(tous('accessoires').map(x => x.famille).filter(Boolean).concat(o.famille ? [o.famille] : []))].sort(triFr);
+  return [...fs.map(f => [f, f]), [null, 'Aucune']];
+}
+function optionsFournisseurs(o) {
+  let fours = tous('carnet').filter(c => c.type === 'fournisseur').map(c => String(c.libelle || '').trim()).filter(Boolean);
+  if (!fours.length) fours = ARTICLES.flatMap(x => tous(x).map(a => a.fournisseur)).filter(Boolean);
+  if (o.fournisseur) fours.push(o.fournisseur);
+  return [...[...new Set(fours)].sort(triFr).map(f => [f, f]), [null, 'Aucun (N/A)']];
+}
+function optionsUnites(o) {
+  const us = [['cartons', 'cartons'], ['rouleaux', 'rouleaux'], ['unités', 'unités']];
+  tous('accessoires').map(x => x.unite).concat(o.unite ? [o.unite] : []).forEach(u => { if (u && !us.some(x => x[0] === u)) us.push([u, u]); });
+  return [[null, 'pièces (rien d\'écrit)'], ...us];
+}
+function champListe(o, k, v) { const x = v || null; return pareil(o[k], x) ? null : { [k]: x }; }
+function caseTexte(o, k) {
+  return { type: 'texte', valeur: o[k] || '', lire: v => { const x = v.trim() || null; return pareil(o[k] || null, x) ? null : { [k]: x }; } };
+}
+function lireNombreCase(v, initial) {
+  const t = v.trim();
+  if (t === initial) return { inchange: true };
+  if (!t) return { valeur: null };
+  const d = Number(t.replace(',', '.'));
+  if (isNaN(d) || d < 0) throw new Error('Il faut un nombre (0 ou plus).');
+  return { valeur: d };
+}
+function caseNombre(o, k) {
+  const initial = num(o[k]) === null ? '' : nombreJoli(num(o[k]));
+  return { type: 'nombre', valeur: initial, lire: v => { const r = lireNombreCase(v, initial); return r.inchange ? null : { [k]: r.valeur }; } };
+}
+/** Un comptage fait depuis le site : signé comme dans l'appli (quand, par qui, depuis quel appareil). */
+const comptage = champs => ({ ...champs, compte: new Date().toISOString(), compte_par: etat.identifiant, compte_appareil: APP.id });
+
+const EDITEURS = {
+  ref: (t, o) => ({ type: 'texte', valeur: o.ref || '', majuscules: true, lire: v => {
+    const r = v.trim().toUpperCase().replace(/\s+/g, '-');
+    if (r === String(o.ref || '').toUpperCase()) return null;
+    if (!REF_VALIDE.test(r)) throw new Error('Référence invalide : lettres sans accent, chiffres et tirets (ex. FON-G300-BLA).');
+    if (refPrise(r, t, o.id)) throw new Error(`La référence ${r} existe déjà (corbeille comprise).`);
+    return { ref: r };
+  }, apres: () => alert('La référence a changé : pense à réimprimer l\'étiquette.') }),
+  stock: (t, o) => editeurStock(t, o),
+  seuil: (t, o) => t === 'accessoires' && o.mode === 'niveau' ? null : caseNombre(o, 'seuil'),
+  fournisseur: (t, o) => ({ type: 'liste', options: optionsFournisseurs(o), valeur: o.fournisseur, lire: v => champListe(o, 'fournisseur', v) }),
+  zone: (t, o) => ({ type: 'liste', options: optionsZones(o), valeur: o.zone, lire: v => { if (!v) throw new Error('Choisis un emplacement.'); return champListe(o, 'zone', v); } }),
+  famille: (t, o) => t !== 'accessoires' ? null : { type: 'liste', options: optionsFamilles(o), valeur: o.famille, lire: v => champListe(o, 'famille', v) },
+  couleur: (t, o) => t === 'accessoires' ? null : caseTexte(o, 'couleur'),
+  groupe: (t, o) => {
+    if (t === 'accessoires') return null;
+    const gs = groupesDe(t);
+    if (o.groupe && !gs.includes(o.groupe)) gs.push(o.groupe);
+    return { type: 'liste', options: [...gs.map(g => [g, g]), [AUTRE, 'Autre…']], valeur: o.groupe, lire: v => {
+      const g = v === AUTRE ? String(prompt(t === 'bobines' ? 'Autre largeur (ex. 330 mm)' : 'Autre diamètre (ex. Ø120)') || '').trim() : v;
+      if (!g || g === o.groupe) return null;
+      return { groupe: g, g_ordre: gOrdre(t, g), ordre: ordreSuivant(t, g) };
+    } };
+  },
+  mode: (t, o) => t !== 'accessoires' ? null : { type: 'liste', options: Object.entries(MODES), valeur: o.mode || 'quantite', lire: v => v === (o.mode || 'quantite') ? null : { mode: v } },
+  unite: (t, o) => t !== 'accessoires' || o.mode === 'niveau' ? null : { type: 'liste', options: optionsUnites(o), valeur: o.unite, lire: v => champListe(o, 'unite', v) },
+  par_carton: (t, o) => (t === 'descentes' || (t === 'accessoires' && o.mode !== 'niveau')) ? caseNombre(o, 'par_carton') : null,
+  note: (t, o) => caseTexte(o, 'note'),
+};
+
+/** La case Stock : un nombre ou un niveau se tape sur place ; bobines, descentes et « mixte » ouvrent une petite fenêtre. */
+function editeurStock(t, o) {
+  if (t === 'accessoires' && (o.mode || 'quantite') === 'quantite') {
+    const initial = num(o.quantite) === null ? '' : nombreJoli(num(o.quantite));
+    return { type: 'nombre', valeur: initial, lire: v => {
+      const r = lireNombreCase(v, initial);
+      if (r.inchange) return null;
+      if (r.valeur === null) throw new Error('Indique combien il y en a.');
+      return comptage({ quantite: r.valeur });
+    } };
+  }
+  if (t === 'accessoires' && o.mode === 'niveau') {
+    return { type: 'liste', options: [[null, '— niveau —'], ...niveaux()], valeur: o.niveau, lire: v => {
+      if (!v) throw new Error('Choisis un niveau.');
+      return v === o.niveau ? null : comptage({ niveau: v });
+    } };
+  }
+  return { type: 'fenetre', ouvrir: () => fenetreCompter(t, o) };
+}
+
+/** Compter depuis le site : bobines (les longueurs), descentes (cartons et tuyaux), « mixte » (cartons fermés et niveau). */
+function fenetreCompter(t, o) {
+  const msg = el('p', { class: 'erreur' });
+  const champTexte = (v, indice) => el('input', { type: 'text', inputmode: 'decimal', value: v, placeholder: indice });
+  const nb = v => num(v) === null ? '' : nombreJoli(num(v));
+  let lire;
+  const corps = [];
+  if (t === 'bobines') {
+    const m = champTexte(metres(o).map(nombreJoli).join(' + '), 'ex. 80 + 42,5');
+    corps.push(el('label', {}, 'Bobines au dépôt (mètres de chacune, séparés par +)'), m,
+      el('p', { class: 'aide' }, 'Vide = plus aucune bobine. Les bobines sorties chez un ouvrier ne sont pas comptées ici.'));
+    lire = () => {
+      const l = m.value.split('+').map(x => x.trim()).filter(Boolean).map(x => Number(x.replace(',', '.')));
+      if (l.some(x => isNaN(x) || x <= 0)) throw new Error('Écris les mètres de chaque bobine, séparés par + (ex. 80 + 42,5).');
+      return { metres: l };
+    };
+  } else if (t === 'descentes') {
+    const c = champTexte(nb(o.cartons), 'cartons'), tu = champTexte(nb(o.tuyaux), 'tuyaux en vrac');
+    corps.push(el('label', {}, 'Cartons'), c, el('label', {}, 'Tuyaux (hors cartons)'), tu);
+    lire = () => ({ cartons: lireNombreCase(c.value, '').valeur ?? 0, tuyaux: lireNombreCase(tu.value, '').valeur ?? 0 });
+  } else {
+    const c = champTexte(nb(o.quantite), 'cartons fermés');
+    const n = choixListe([[null, '— niveau —'], ...niveaux()], o.niveau);
+    corps.push(el('label', {}, 'Cartons fermés'), c, el('label', {}, 'Niveau du carton ouvert'), n);
+    lire = () => {
+      const q = lireNombreCase(c.value, '').valeur ?? null;
+      if (q === null) throw new Error('Indique le nombre de cartons fermés.');
+      if (!n.value) throw new Error('Choisis le niveau du carton ouvert.');
+      return { quantite: q, niveau: n.value };
+    };
+  }
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, `Compter : ${o.nom_court || o.nom || o.ref}`),
+    corps, msg,
+    el('button', { class: 'principal', onclick: async ev => {
+      const b = ev.currentTarget;
+      let champs;
+      try { champs = lire(); } catch (e) { msg.textContent = e.message; return; }
+      b.disabled = true;
+      try { await ecrire(t, o.id, comptage(champs)); fermerFenetre(); (etat.redessinerStock || (() => principal(etat.onglet)))(); }
+      catch (e) { msg.textContent = e.message; b.disabled = false; }
+    } }, 'Enregistrer le comptage'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')),
+    { fixe: true });
+}
+
+/** Ouvre une case sur place : Entrée ou toucher ailleurs = enregistré ; Échap = annulé. */
+function editerCase(td, c, t, o0) {
+  const o = trouver(t, o0.id) || o0;
+  const e = EDITEURS[c.k] && EDITEURS[c.k](t, o);
+  if (!e) return;
+  if (e.type === 'fenetre') { e.ouvrir(); return; }
+  if (td.querySelector('input, select')) return;
+  const champ = e.type === 'liste' ? choixListe(e.options, e.valeur)
+    : el('input', { type: 'text', value: e.valeur ?? '', inputmode: e.type === 'nombre' ? 'decimal' : null,
+        autocapitalize: e.majuscules ? 'characters' : null, autocomplete: 'off', spellcheck: 'false' });
+  champ.classList.add('dans-case');
+  vider(td).append(champ);
+  td.classList.add('en-cours');
+  champ.focus();
+  if (champ.select) champ.select();
+  let fini = false;
+  const redessiner = () => (etat.redessinerStock || (() => principal(etat.onglet)))();
+  const valider = async () => {
+    if (fini) return;
+    fini = true;
+    let champs;
+    try { champs = e.lire(champ.value); } catch (err) { alert(err.message); redessiner(); return; }
+    if (!champs) { redessiner(); return; }
+    champ.disabled = true;
+    try { await ecrire(t, o.id, champs); redessiner(); if (e.apres) e.apres(champs); }
+    catch (err) { alert(err.message); redessiner(); }
+  };
+  champ.addEventListener('click', ev => ev.stopPropagation());
+  champ.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); valider(); }
+    else if (ev.key === 'Escape') { fini = true; redessiner(); }
+  });
+  champ.addEventListener('blur', () => valider());
+  if (e.type === 'liste') champ.addEventListener('change', () => valider());
 }
 
 // ------------------------------------------------------------------ À signaler
@@ -1034,7 +1345,21 @@ const kitsActifs = () => tous('kits');
 function nomKit(k) { return (k.client && k.client.trim()) || (k.libelle && k.libelle.trim()) || `Kit du ${jour(k.cree_le || k.maj)}`; }
 function uniteLigne(t, o, u) { return t === 'bobines' ? 'bobine(s)' : t === 'descentes' ? (u || 'tuyaux') : (o && o.mode === 'mixte' ? 'carton(s) fermé(s)' : (o && o.unite) || 'pièce(s)'); }
 
+/** L'onglet Kits (Sanji, 11/11) : « choisir entre Kit vente et Kit déploiement, même lieu de départ, mais ce sont des sous-menus ». */
 function pageKits(corps) {
+  const sous = lireStockage('sd_sous_kits') === 'deploiement' ? 'deploiement' : 'vente';
+  const nVente = tous('kits').filter(k => !k.pret).length;
+  const nDep = tous('deploiements').filter(d => d.statut === 'parti').length;
+  const nPrev = tous('deploiements').filter(d => d.statut === 'prevu').length;
+  const infoDep = [nPrev ? `${nPrev} prévu${nPrev > 1 ? 's' : ''}` : null, nDep ? `${nDep} dehors` : null].filter(Boolean).join(' · ');
+  const choisir = k => { ecrireStockage('sd_sous_kits', k); principal('kits'); };
+  corps.append(el('div', { class: 'puces sous-menu' },
+    el('button', { class: sous === 'vente' ? 'actif' : '', onclick: () => choisir('vente') }, `Kits vente${nVente ? ` (${nVente})` : ''}`),
+    el('button', { class: sous === 'deploiement' ? 'actif' : '', onclick: () => choisir('deploiement') }, `Kits déploiement${infoDep ? ` (${infoDep})` : ''}`)));
+  if (sous === 'deploiement') pageDeploiements(corps); else pageKitsVente(corps);
+}
+
+function pageKitsVente(corps) {
   const att = kitsActifs().filter(k => !k.pret).sort((a, b) => (a.cree_le || '').localeCompare(b.cree_le || ''));
   const prets = kitsActifs().filter(k => k.pret).sort((a, b) => (b.pret_le || '').localeCompare(a.pret_le || ''));
   corps.append(el('button', { class: 'principal', style: 'margin:0 0 6px', onclick: () => editeurKit(null) }, '+ Nouveau kit'));
@@ -1056,11 +1381,470 @@ function carteKit(k) {
       k.note ? el('div', { style: 'color:var(--accent);font-size:14px' }, k.note) : null));
 }
 
+// ------------------------------------------------------------------ Kits déploiement (départs et retours par employé)
+
+/**
+ * Sanji, 11/11 : « quel employé est avec quoi : je sélectionne l'employé, j'ajoute les articles qu'il prend dans ce qui
+ * est dispo (code-barres ou à la main, comme les kits), et quand je fais le retour je rentre ce qui rentre et ça se met
+ * dans le stock auto » ; « plusieurs employés, ils fonctionnent en binôme » ; « nous au dépôt on utilise aussi les
+ * feuilles de zinc : combien on en prend et pourquoi » ; « simple, rapide, efficace ».
+ *  - le départ fait baisser le stock tout de suite (les bobines choisies passent « sorties » chez l'employé) ;
+ *  - au retour, on note ce qui revient (bobines : les mètres qui restent), le stock remonte ; le reste est « utilisé » ;
+ *  - « usage au dépôt » : rien ne revient, on note combien et pourquoi ;
+ *  - un article jamais compté : le départ est noté, mais le stock (inconnu) n'est pas touché ;
+ *  - même règles que l'appli (Deploiements.kt).
+ */
+const DEPOT = 'Dépôt';
+function nomDep(d) {
+  const qui = d.interne ? 'Usage au dépôt' : ((d.employes || []).join(' + ') || '?');
+  return qui + (d.motif ? ` · ${d.motif}` : '');
+}
+function employesDuCarnet() { return [...new Set(tous('carnet').filter(c => c.type === 'employe').map(c => String(c.libelle || '').trim()).filter(Boolean))].sort(triFr); }
+function nouvelIdDep() {
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  return `DEP-${String(d.getFullYear()).slice(2)}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${hex(2)}`;
+}
+const somme = l => l.reduce((a, x) => a + (Number(x) || 0), 0);
+/** Ce qui est parti, en clair (pour un élément de « preleve »). */
+function unitePrise(p, o) { return p.t === 'bobines' ? 'ml' : p.t === 'descentes' ? (p.champ || 'tuyaux') : uniteLigne(p.t, o, null); }
+function prisN(p) { return p.t === 'bobines' ? somme(p.metres || []) : (num(p.voulu) ?? num(p.n) ?? 0); }
+function revenuN(p, r) { if (!r) return 0; return p.t === 'bobines' ? somme(r.metres || []) : (num(r.n) ?? 0); }
+function textePris(p, o) {
+  if (p.t === 'bobines') { const m = p.metres || []; return `${m.length} bobine${m.length > 1 ? 's' : ''} (${m.map(x => nombreJoli(Number(x))).join(' + ') || '—'} ml)`; }
+  return `${nombreJoli(prisN(p))} ${unitePrise(p, o)}` + (p.trace ? ' (niveau inchangé)' : p.inconnu ? ' (stock pas encore compté)' : '');
+}
+
+/** Aujourd'hui (AAAA-MM-JJ, heure locale) et une date courte « 12/11 ». */
+function aujourdhui() { const d = new Date(), p = x => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+function jourDate(s) { if (!s) return '?'; const [, m, j] = String(s).slice(0, 10).split('-'); return `${j}/${m}`; }
+
+function pageDeploiements(corps) {
+  const deps = tous('deploiements');
+  // Sanji : « avec date pour les kits déploiement, modifiable, si le patron crée le kit » : un départ peut être PRÉVU
+  const prevus = deps.filter(d => d.statut === 'prevu').sort((a, b) => (a.pour_le || '').localeCompare(b.pour_le || ''));
+  const partis = deps.filter(d => d.statut === 'parti').sort((a, b) => (a.depart_le || '').localeCompare(b.depart_le || ''));
+  const rentres = deps.filter(d => d.statut === 'rentre').sort((a, b) => (b.retour_le || b.depart_le || '').localeCompare(a.retour_le || a.depart_le || ''));
+  corps.append(el('div', { class: 'rangee', style: 'margin:0 0 6px' },
+    el('button', { class: 'principal etire', style: 'margin:0', onclick: () => editeurDepart(null, {}) }, '+ Nouveau départ'),
+    el('button', { class: 'second', onclick: () => editeurDepart(null, { interne: true }) }, '+ Usage au dépôt')));
+  if (prevus.length) {
+    corps.append(el('div', { class: 'titre-section' }, `Prévus (${prevus.length})`));
+    prevus.forEach(d => corps.append(carteDep(d)));
+  }
+  corps.append(el('div', { class: 'titre-section' }, `Partis (${partis.length})`));
+  if (!partis.length) corps.append(el('p', { class: 'aide' }, 'Personne n\'est dehors avec du matériel.'));
+  partis.forEach(d => corps.append(carteDep(d)));
+  const arch = el('details', { class: 'dossier', style: 'margin-top:16px' }, el('summary', {}, `Rentrés · archivés (${rentres.length})`));
+  rentres.forEach(d => arch.append(el('div', { style: 'padding:0 10px 4px' }, carteDep(d))));
+  corps.append(arch, blocParEmploye(deps));
+}
+
+function carteDep(d) {
+  const prevu = d.statut === 'prevu';
+  const n = (prevu ? d.lignes : d.preleve || []).length;
+  const quand = prevu ? `prévu pour le ${jourDate(d.pour_le)}${d.cree_par ? ' (créé par ' + d.cree_par + ')' : ''}`
+    : d.statut === 'parti' ? `parti le ${jourHeure(d.depart_le)}${d.depart_par ? ' (noté par ' + d.depart_par + ')' : ''}`
+    : d.interne ? `le ${jourHeure(d.depart_le)}${d.depart_par ? ' (noté par ' + d.depart_par + ')' : ''}`
+    : `rentré le ${jourHeure(d.retour_le)}${d.retour_par ? ' (noté par ' + d.retour_par + ')' : ''}`;
+  return el('div', { class: 'carte kit', style: 'cursor:pointer', onclick: () => prevu ? editeurDepart(d, {}) : fenetreDep(d) },
+    el('div', { class: 'coche' }, prevu ? '◷' : d.statut === 'parti' ? '↗' : '✓'),
+    el('div', { class: 'contenu' },
+      el('div', { style: 'font-weight:700' }, nomDep(d)),
+      el('div', { class: 'aide' }, `${n} article${n > 1 ? 's' : ''} · ${quand}`),
+      d.note ? el('div', { style: 'color:var(--accent);font-size:14px' }, d.note) : null));
+}
+
+/** Un déploiement : ce qui est parti (et revenu) ; s'il est dehors : Retour, Ils prennent encore, Supprimer (erreur). */
+function fenetreDep(d0) {
+  const d = trouver('deploiements', d0.id) || d0;
+  const rentre = d.statut === 'rentre';
+  const lignes = (d.preleve || []).map((p, i) => {
+    const o = trouver(p.t, p.id);
+    const r = (d.retour || [])[i];
+    const u = unitePrise(p, o);
+    const details = [`Pris : ${textePris(p, o)}`];
+    if (rentre && !d.interne) {
+      details.push(`revenu : ${nombreJoli(revenuN(p, r))} ${u}`, `utilisé : ${nombreJoli(Math.max(0, prisN(p) - revenuN(p, r)))} ${u}`);
+    }
+    return el('div', { class: 'ligne-panier' }, el('div', { class: 'etire' },
+      el('div', { class: 'nom' }, o ? (o.nom_court || o.nom || o.ref) : p.id),
+      el('div', { class: 'ref' }, details.join(' · '))));
+  });
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, nomDep(d)),
+    el('p', { class: 'aide' }, [
+      `Parti le ${jourHeure(d.depart_le)}${d.depart_par ? ' (noté par ' + d.depart_par + ')' : ''}`,
+      rentre && !d.interne ? `rentré le ${jourHeure(d.retour_le)}${d.retour_par ? ' (noté par ' + d.retour_par + ')' : ''}` : null,
+    ].filter(Boolean).join(' · ')),
+    lignes.length ? lignes : el('p', { class: 'aide' }, 'Rien n\'est parti.'),
+    rentre ? null : el('button', { class: 'principal', onclick: () => fenetreRetour(d) }, 'Retour : noter ce qui revient'),
+    rentre ? null : el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => editeurDepart(d, { ajout: true }) }, '+ Ils prennent encore…'),
+    rentre ? null : el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: async ev => {
+      if (!confirm('Supprimer ce départ (erreur de saisie) ? Tout ce qu\'il avait pris revient dans le stock.')) return;
+      const b = ev.currentTarget; b.disabled = true;
+      try {
+        const tout = (d.preleve || []).map(p => p.t === 'bobines' ? (p.metres || []).map(Number) : (num(p.voulu) ?? num(p.n) ?? 0));
+        await appliquerRetour(d, tout, true);
+        fermerFenetre(); principal('kits');
+      } catch (e) { alert(e.message); b.disabled = false; }
+    } }, 'Supprimer (erreur) : tout revient'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Fermer')));
+}
+
+/** Ajouter au départ (recherche, scanner, douchette) : sans question de manque ici, on vérifie tout en validant. */
+function ajouterAuDepart(b, t, o, redessiner) {
+  if (t === 'bobines') { choisirBobines(b, o, b.lignes.find(x => x.t === t && x.id === o.id), redessiner); return; }
+  const u = t === 'descentes' ? 'tuyaux' : undefined;
+  const l = b.lignes.find(x => x.t === t && x.id === o.id && x.u === u);
+  if (l) l.n = (num(l.n) ?? 1) + 1; else b.lignes.push({ t, id: o.id, n: 1, ...(u ? { u } : {}) });
+  redessiner();
+}
+
+/**
+ * Nouveau départ (qui, pour quoi, pour quand, quoi) : « Départ maintenant » (le stock baisse) ou « Enregistrer pour plus tard »
+ * (prévu, le stock ne bouge pas : un patron peut le préparer) ; un départ prévu se rouvre ici (modifier, faire partir, supprimer).
+ * options.interne : « usage au dépôt » ; options.ajout : « ils prennent encore » (dExistant est parti).
+ */
+function editeurDepart(dExistant, options) {
+  const opt = options || {};
+  const interne = !!opt.interne;
+  const ajout = !!opt.ajout;
+  const prevu = !!dExistant && !ajout && dExistant.statut === 'prevu';
+  const d0 = prevu ? (trouver('deploiements', dExistant.id) || dExistant) : null;
+  const brouillon = prevu
+    ? { employes: [...(d0.employes || [])], motif: d0.motif || '', pourLe: d0.pour_le || aujourdhui(), lignes: (d0.lignes || []).map(l => ({ ...l })) }
+    : { employes: interne ? [DEPOT] : [], motif: '', pourLe: aujourdhui(), lignes: [] };
+  const zone = el('div');
+  const msg = el('p', { class: 'erreur' });
+  function dessiner() {
+    vider(zone);
+    let blocQui = null;
+    if (!ajout && !interne) {
+      const noms = [...new Set([...employesDuCarnet(), ...brouillon.employes])];
+      blocQui = el('div', { class: 'puces', style: 'flex-wrap:wrap' },
+        noms.map(nm => el('button', { class: brouillon.employes.includes(nm) ? 'actif' : '', onclick: () => {
+          brouillon.employes = brouillon.employes.includes(nm) ? brouillon.employes.filter(x => x !== nm) : [...brouillon.employes, nm];
+          dessiner();
+        } }, nm)),
+        el('button', { onclick: async () => {
+          const nm = String(prompt('Prénom de l\'employé') || '').trim().slice(0, 40);
+          if (!nm) return;
+          if (!employesDuCarnet().some(x => x.toLowerCase() === nm.toLowerCase())) {
+            try { await ecrire('carnet', 'E-' + hex(5), { type: 'employe', libelle: nm, supprime: false }); } catch (e) { alert(e.message); }
+          }
+          if (!brouillon.employes.includes(nm)) brouillon.employes.push(nm);
+          dessiner();
+        } }, '+ Autre…'));
+    }
+    const motif = el('input', { type: 'text', value: brouillon.motif, placeholder: interne ? 'ex. réparation, gabarit, essai…' : 'chantier, client… (facultatif)',
+      oninput: e => { brouillon.motif = e.target.value; } });
+    const panier = el('div');
+    if (!brouillon.lignes.length) panier.append(el('p', { class: 'aide' }, 'Rien pour l\'instant : ajoute, scanne, ou passe à la douchette.'));
+    brouillon.lignes.forEach((l, i) => {
+      const o = trouver(l.t, l.id);
+      const nVue = el('span', { class: 'n' }, nombreJoli(num(l.n) ?? 1));
+      const bob = l.t === 'bobines' && Array.isArray(l.bobines) && l.bobines.length ? ` · bobines : ${l.bobines.map(x => nombreJoli(Number(x))).join(' + ')} ml` : '';
+      const changer = delta => {
+        if (l.t === 'bobines') { choisirBobines(brouillon, o, l, dessiner); return; }
+        l.n = Math.max(1, (num(l.n) ?? 1) + delta); nVue.textContent = nombreJoli(l.n);
+      };
+      panier.append(el('div', { class: 'ligne-panier' },
+        el('div', { class: 'etire' }, el('div', { class: 'nom' }, (o && (o.nom_court || o.nom)) || l.id),
+          el('div', { class: 'ref' }, `${(o && o.ref) || ''} · en stock : ${(o && resume(l.t, o)) || 'pas compté'}${bob}`)),
+        el('button', { class: 'petit', onclick: () => changer(-1) }, '−'), nVue, el('button', { class: 'petit', onclick: () => changer(1) }, '+'),
+        l.t === 'descentes' ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, l.u || 'tuyaux')
+          : el('span', { class: 'aide' }, uniteLigne(l.t, o, l.u)),
+        el('button', { class: 'petit danger', onclick: () => { brouillon.lignes.splice(i, 1); dessiner(); } }, '✕')));
+    });
+    const date = el('input', { type: 'date', value: brouillon.pourLe, oninput: e => { brouillon.pourLe = e.target.value; } });
+    ajouterA(zone,
+      el('h2', {}, ajout ? `${nomDep(dExistant)} : ils prennent encore` : interne ? 'Usage au dépôt' : prevu ? 'Départ prévu' : 'Nouveau départ'),
+      prevu ? el('p', { class: 'aide' }, `Prévu${d0.cree_par ? ' par ' + d0.cree_par : ''} : le stock n'a pas encore bougé. Modifie-le, puis « Départ maintenant » quand ils partent.`) : null,
+      interne ? el('p', { class: 'aide' }, 'Ce que le dépôt utilise lui-même (feuilles de zinc…) : rien ne revient ; on note combien et pourquoi.') : null,
+      blocQui ? [el('label', {}, 'Qui part ? (un ou plusieurs)'), blocQui] : null,
+      ajout ? null : [el('label', {}, interne ? 'Pourquoi ?' : 'Chantier / motif'), motif],
+      ajout || interne ? null : [el('label', {}, 'Pour le'), date],
+      el('label', {}, `Ce qui part (${brouillon.lignes.length})`), panier,
+      el('div', { class: 'rangee', style: 'margin-top:10px' },
+        el('button', { class: 'second etire', onclick: () => choisirArticle(brouillon, dessiner, ajouterAuDepart, 'Ajouter au départ') }, '+ Ajouter un article'),
+        el('button', { class: 'second', onclick: () => scanner(code => {
+          const x = trouverParCode(code);
+          if (!x) { alert(`Code inconnu : ${code}`); return; }
+          ajouterAuDepart(brouillon, x.t, x.o, dessiner);
+        }) }, '▣ Scanner')),
+      msg,
+      el('button', { class: 'principal', onclick: ev => valider(ev.currentTarget, true) },
+        ajout || interne ? 'Valider (le stock baisse)' : 'Départ maintenant (le stock baisse)'),
+      ajout || interne ? null : el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: ev => valider(ev.currentTarget, false) },
+        prevu ? 'Enregistrer les changements (toujours prévu)' : 'Enregistrer pour plus tard (prévu, le stock ne bouge pas)'),
+      prevu ? el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: async ev => {
+        if (!confirm('Supprimer ce départ prévu ? (Rien n\'est encore parti : le stock ne bouge pas.)')) return;
+        const b = ev.currentTarget; b.disabled = true;
+        try { await ecrire('deploiements', d0.id, { supprime: true }); fermerFenetre(); principal('kits'); }
+        catch (e) { msg.textContent = e.message; b.disabled = false; }
+      } }, 'Supprimer ce départ prévu') : null,
+      el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, prevu ? 'Fermer' : 'Annuler'));
+  }
+  async function valider(b, partir) {
+    msg.textContent = '';
+    if (!brouillon.lignes.length) { msg.textContent = 'Ajoute au moins un article.'; return; }
+    if (!ajout && !interne && !brouillon.employes.length) { msg.textContent = 'Choisis qui part.'; return; }
+    if (interne && !brouillon.motif.trim()) { msg.textContent = 'Écris pourquoi (ex. réparation…).'; return; }
+    const lignesJson = brouillon.lignes.map(l => ({ t: l.t, id: l.id, n: num(l.n) ?? 1, ...(l.u ? { u: l.u } : {}),
+      ...(Array.isArray(l.bobines) && l.bobines.length ? { bobines: l.bobines.map(Number) } : {}) }));
+    b.disabled = true;
+    if (!partir) {
+      // Prévu : on enregistre seulement (le stock ne bouge pas)
+      try {
+        await ecrire('deploiements', prevu ? d0.id : nouvelIdDep(), {
+          employes: brouillon.employes, interne: false, motif: brouillon.motif.trim().slice(0, 120) || null,
+          lignes: lignesJson, pour_le: brouillon.pourLe || null,
+          ...(prevu ? {} : { statut: 'prevu', preleve: [], cree_par: etat.identifiant, supprime: false }) });
+        fermerFenetre(); ecrireStockage('sd_sous_kits', 'deploiement'); principal('kits');
+      } catch (e) { msg.textContent = e.message; b.disabled = false; }
+      return;
+    }
+    try {
+      await chargerTout();                         // le stock frais, juste avant d'y toucher
+      const manques = calculerManques(brouillon.lignes);
+      if (manques.length && !confirm(`Il en manque :\n${manques.join('\n')}\n\nOn prend ce qu'il y a, et ces articles passent en « À signaler » rouge vif. Continuer ?`)) {
+        b.disabled = false; return;
+      }
+      const dAvant = ajout || prevu ? (trouver('deploiements', dExistant.id) || dExistant) : null;
+      const id = dAvant ? dAvant.id : nouvelIdDep();
+      const employes = ajout ? (dAvant.employes || []) : brouillon.employes;
+      const motifTexte = ajout ? (dAvant.motif || null) : (brouillon.motif.trim().slice(0, 120) || null);
+      const quand = new Date().toISOString();
+      const { lot, preleve } = mouvementsDepart(id, employes.join(' + '), motifTexte, lignesJson, quand);
+      const champsDep = ajout
+        ? { lignes: [...(dAvant.lignes || []), ...lignesJson], preleve: [...(dAvant.preleve || []), ...preleve] }
+        : { employes, interne, motif: motifTexte, lignes: lignesJson, preleve, statut: interne ? 'rentre' : 'parti',
+            depart_le: quand, depart_par: etat.identifiant, supprime: false,
+            pour_le: interne ? aujourdhui() : (brouillon.pourLe || aujourdhui()),
+            ...(dAvant ? {} : { cree_par: etat.identifiant }),
+            ...(interne ? { retour: [], retour_le: quand, retour_par: etat.identifiant } : {}) };
+      lot.push({ table: 'deploiements', id, champs: champsDep });
+      await ecrireLot(lot);
+      fermerFenetre();
+      ecrireStockage('sd_sous_kits', 'deploiement');
+      principal('kits');
+    } catch (e) { msg.textContent = e.message; b.disabled = false; }
+  }
+  dessiner();
+  ouvrirFenetre(zone, { fixe: true });
+  etat.kitEnCours = { brouillon, dessiner, ajouteur: ajouterAuDepart };     // la douchette ajoute au départ
+}
+
+/** Ce qui manque (en stock) pour un départ ; un article jamais compté ne compte pas (on ne sait pas). */
+function calculerManques(lignes) {
+  return lignes.flatMap(l => {
+    const o = trouver(l.t, l.id);
+    if (!o) return [];
+    const n = num(l.n) ?? 1;
+    if (l.t === 'bobines') {
+      const pris = Math.min(n, metres(o).length);
+      return pris < n ? [`• ${o.nom_court || o.nom} : ${n} bobine(s), ${pris} au dépôt`] : [];
+    }
+    if (l.t === 'accessoires' && (o.mode || 'quantite') === 'niveau') return [];
+    const avant = num(o[l.t === 'descentes' ? (l.u || 'tuyaux') : 'quantite']);
+    if (avant === null) return [];
+    return n > avant ? [`• ${o.nom_court || o.nom} : ${nombreJoli(n)} pris, ${nombreJoli(avant)} en stock`] : [];
+  });
+}
+
+/** Les écritures d'un départ (une seule par article : le document ignore une 2e écriture au même instant), et ce qui est pris. */
+function mouvementsDepart(depId, qui, motif, lignes, quand) {
+  const parArticle = new Map();
+  const preleve = [];
+  for (const l of lignes) {
+    const o = trouver(l.t, l.id);
+    if (!o || o.supprime) continue;
+    const cle = l.t + '|' + l.id;
+    if (!parArticle.has(cle)) parArticle.set(cle, { t: l.t, id: o.id, champs: {}, metres: metres(o).slice(), sorties: sorties(o).slice() });
+    const a = parArticle.get(cle);
+    const n = num(l.n) ?? 1;
+    const mvt = { type: 'depart', dep: depId, ouvrier: qui || null, quand, par: etat.identifiant, ...(motif ? { motif } : {}) };
+    if (l.t === 'bobines') {
+      // Les bobines choisies d'abord ; si l'une n'est plus au dépôt (départ prévu à l'avance), on prend la suivante
+      const pris = [];
+      (Array.isArray(l.bobines) ? l.bobines.map(Number) : []).forEach(m => {
+        if (pris.length >= n) return;
+        const i = a.metres.indexOf(m);
+        if (i >= 0) { a.metres.splice(i, 1); pris.push(m); }
+      });
+      while (pris.length < n && a.metres.length) pris.push(a.metres.shift());
+      pris.forEach(m => a.sorties.push({ m, ouvrier: qui || null, depuis: quand, par: etat.identifiant, dep: depId }));
+      Object.assign(mvt, { n: pris.length, unite: 'bobine(s)', bobines: pris, m: somme(pris) });
+      Object.assign(a.champs, { metres: a.metres, sorties: a.sorties, mouvement: mvt });
+      if (pris.length < n) { mvt.manque = n - pris.length; a.champs.manque = { quand, par: etat.identifiant, dep: depId, n: n - pris.length }; }
+      preleve.push({ t: l.t, id: o.id, metres: pris });
+      continue;
+    }
+    Object.assign(mvt, { n, unite: uniteLigne(l.t, o, l.u) });
+    if (l.t === 'accessoires' && (o.mode || 'quantite') === 'niveau') {
+      a.champs.mouvement = { ...mvt, niveau_inchange: true };      // compté au niveau : noté, le niveau ne bouge pas
+      preleve.push({ t: l.t, id: o.id, trace: true, n });
+      continue;
+    }
+    const champ = l.t === 'descentes' ? (l.u || 'tuyaux') : 'quantite';
+    const avant = champ in a.champs ? a.champs[champ] : num(o[champ]);
+    if (avant === null) {                                         // jamais compté : noté, le stock (inconnu) ne bouge pas
+      a.champs.mouvement = mvt;
+      preleve.push({ t: l.t, id: o.id, champ, n: 0, voulu: n, inconnu: true });
+      continue;
+    }
+    const retire = Math.min(n, avant);
+    a.champs[champ] = avant - retire;
+    a.champs.mouvement = mvt;
+    if (n - retire > 0) { mvt.manque = n - retire; a.champs.manque = { quand, par: etat.identifiant, dep: depId, n: n - retire }; }
+    preleve.push({ t: l.t, id: o.id, champ, n: retire, voulu: n });
+  }
+  return { lot: [...parArticle.values()].map(a => ({ table: a.t, id: a.id, champs: a.champs })), preleve };
+}
+
+/** Retour : pour chaque chose partie, combien revient (bobines : les mètres qui restent sur chacune). */
+function fenetreRetour(d0) {
+  const d = trouver('deploiements', d0.id) || d0;
+  const champs = [];
+  const msg = el('p', { class: 'erreur' });
+  const blocs = (d.preleve || []).map((p, i) => {
+    const o = trouver(p.t, p.id);
+    const nom = o ? (o.nom_court || o.nom || o.ref) : p.id;
+    if (p.t === 'bobines') {
+      const inputs = (p.metres || []).map(m => el('input', { type: 'text', inputmode: 'decimal', placeholder: `vide ou 0 = finie`, 'data-max': m }));
+      champs[i] = { bobines: true, inputs, max: (p.metres || []).map(Number) };
+      return el('div', { class: 'carte' }, el('div', { class: 'nom', style: 'font-weight:700' }, nom),
+        (p.metres || []).flatMap((m, j) => [el('label', {}, `Bobine de ${nombreJoli(Number(m))} ml : combien de mètres reviennent ?`), inputs[j]]));
+    }
+    const max = num(p.voulu) ?? num(p.n) ?? 0;
+    const input = el('input', { type: 'text', inputmode: 'decimal', placeholder: `0 à ${nombreJoli(max)}` });
+    champs[i] = { input, max };
+    return el('div', { class: 'carte' }, el('div', { class: 'nom', style: 'font-weight:700' }, nom),
+      el('label', {}, `Pris : ${textePris(p, o)} · combien reviennent ?`), input);
+  });
+  const lire = () => champs.map(c => {
+    const un = (txt, max) => {
+      const t = txt.trim();
+      if (!t) return 0;
+      const v = Number(t.replace(',', '.'));
+      if (isNaN(v) || v < 0) throw new Error('Il faut des nombres (0 ou plus).');
+      if (v > max) throw new Error(`Plus que ce qui est parti (${nombreJoli(max)}) : vérifie.`);
+      return v;
+    };
+    return c.bobines ? c.inputs.map((x, j) => un(x.value, c.max[j])) : un(c.input.value, c.max);
+  });
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, `Retour : ${nomDep(d)}`),
+    el('p', { class: 'aide' }, 'Écris ce qui revient au dépôt ; vide = rien ne revient (utilisé). Le stock remonte tout seul.'),
+    el('button', { class: 'second', style: 'width:100%;margin-bottom:8px', onclick: () => {
+      champs.forEach(c => { if (c.bobines) c.inputs.forEach((x, j) => { x.value = nombreJoli(c.max[j]); }); else c.input.value = nombreJoli(c.max); });
+    } }, 'Tout revient (remplir)'),
+    blocs, msg,
+    el('button', { class: 'principal', onclick: async ev => {
+      const b = ev.currentTarget;
+      let valeurs;
+      try { valeurs = lire(); } catch (e) { msg.textContent = e.message; return; }
+      b.disabled = true;
+      try { await appliquerRetour(d, valeurs, false); fermerFenetre(); principal('kits'); }
+      catch (e) { msg.textContent = e.message; b.disabled = false; }
+    } }, 'Valider le retour (le stock remonte)'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => fenetreDep(d) }, 'Retour au départ')),
+    { fixe: true });
+}
+
+/** Le retour : le stock remonte de ce qui revient ; le déploiement passe « rentré » (supprimer : erreur de saisie, tout revient). */
+async function appliquerRetour(d0, valeurs, supprimer) {
+  await chargerTout();
+  const d = trouver('deploiements', d0.id) || d0;
+  const qui = (d.employes || []).join(' + ') || null;
+  const quand = new Date().toISOString();
+  const parArticle = new Map();
+  const retour = [];
+  (d.preleve || []).forEach((p, i) => {
+    const o = trouver(p.t, p.id);
+    const v = valeurs[i];
+    if (!o) { retour.push(null); return; }
+    const cle = p.t + '|' + p.id;
+    if (!parArticle.has(cle)) parArticle.set(cle, { t: p.t, id: o.id, champs: {}, metres: metres(o).slice(), sorties: sorties(o).slice() });
+    const a = parArticle.get(cle);
+    const mvt = { type: 'depart_retour', dep: d.id, ouvrier: qui, quand, par: etat.identifiant, ...(supprimer ? { annule: true } : {}) };
+    if (p.t === 'bobines') {
+      const restes = (Array.isArray(v) ? v : []).map(Number);
+      (p.metres || []).forEach((m, j) => {
+        // La bobine est encore notée « sortie » pour ce départ : on l'enlève ; sinon (déjà ramenée par le ±), on ne la compte pas deux fois
+        const k = a.sorties.findIndex(s => s.dep === d.id && Number(s.m) === Number(m));
+        if (k < 0) return;
+        a.sorties.splice(k, 1);
+        if ((restes[j] || 0) > 0) a.metres.push(restes[j]);
+      });
+      Object.assign(mvt, { n: restes.filter(x => x > 0).length, unite: 'bobine(s)', bobines: p.metres || [], restes, m: somme(p.metres || []), retour: somme(restes) });
+      Object.assign(a.champs, { metres: a.metres, sorties: a.sorties, mouvement: mvt });
+      retour.push({ t: p.t, id: p.id, metres: restes });
+      return;
+    }
+    const n = Number(v) || 0;
+    Object.assign(mvt, { n, unite: p.t === 'descentes' ? (p.champ || 'tuyaux') : uniteLigne(p.t, o, null) });
+    if (p.trace || p.inconnu) {
+      if (n > 0) a.champs.mouvement = { ...mvt, ...(p.trace ? { niveau_inchange: true } : {}) };
+      retour.push({ t: p.t, id: p.id, trace: true, n });
+      return;
+    }
+    if (n > 0) {
+      const avant = p.champ in a.champs ? a.champs[p.champ] : (num(o[p.champ]) ?? 0);
+      a.champs[p.champ] = avant + n;
+      a.champs.mouvement = mvt;
+    }
+    retour.push({ t: p.t, id: p.id, champ: p.champ, n });
+  });
+  const lot = [...parArticle.values()].filter(a => Object.keys(a.champs).length).map(a => ({ table: a.t, id: a.id, champs: a.champs }));
+  lot.push({ table: 'deploiements', id: d.id, champs: { statut: 'rentre', retour, retour_le: quand, retour_par: etat.identifiant, ...(supprimer ? { supprime: true } : {}) } });
+  await ecrireLot(lot);
+}
+
+/** « Par employé » : qui a pris quoi, ce qui est revenu, ce qui est utilisé, ce qui est encore dehors (binômes : sous chacun). */
+function blocParEmploye(deps) {
+  const det = el('details', { class: 'dossier', style: 'margin-top:12px' }, el('summary', {}, 'Par employé : qui a pris quoi'));
+  const par = new Map();
+  deps.filter(d => d.statut !== 'prevu').forEach(d => (d.employes || []).forEach(e => { if (!par.has(e)) par.set(e, []); par.get(e).push(d); }));
+  if (!par.size) det.append(el('p', { class: 'aide', style: 'padding:0 14px 10px' }, 'Rien pour l\'instant.'));
+  [...par.keys()].sort(triFr).forEach(e => {
+    const l = par.get(e).sort((a, b) => (b.depart_le || '').localeCompare(a.depart_le || ''));
+    const enCours = l.filter(d => d.statut === 'parti').length;
+    const totaux = new Map();
+    l.forEach(d => (d.preleve || []).forEach((p, i) => {
+      const o = trouver(p.t, p.id);
+      const u = unitePrise(p, o);
+      const k = `${p.t}|${p.id}|${u}`;
+      const x = totaux.get(k) || { nom: o ? (o.nom_court || o.nom || o.ref) : p.id, u, pris: 0, revenu: 0, dehors: 0 };
+      const pr = prisN(p);
+      x.pris += pr;
+      if (d.statut === 'parti') x.dehors += pr; else x.revenu += revenuN(p, (d.retour || [])[i]);
+      totaux.set(k, x);
+    }));
+    const lignes = [...totaux.values()].sort((a, b) => triFr(a.nom, b.nom));
+    const tableau = el('table', { class: 'tableau' },
+      el('thead', {}, el('tr', {}, ['Article', 'Pris', 'Revenu', 'Utilisé', 'Encore dehors'].map((c, i) => el('th', { class: i === 0 ? 'col1' : '' }, c)))),
+      el('tbody', {}, lignes.map(x => el('tr', {},
+        el('td', { class: 'col1' }, x.nom),
+        el('td', {}, `${nombreJoli(x.pris)} ${x.u}`),
+        el('td', {}, x.revenu ? `${nombreJoli(x.revenu)} ${x.u}` : '—'),
+        el('td', { class: 'nombre' }, `${nombreJoli(Math.max(0, x.pris - x.revenu - x.dehors))} ${x.u}`),
+        el('td', {}, x.dehors ? `${nombreJoli(x.dehors)} ${x.u}` : '—')))));
+    det.append(el('details', { class: 'dossier', style: 'margin:0 10px 8px' },
+      el('summary', {}, e, el('span', { class: 'compte' }, `${l.length} départ${l.length > 1 ? 's' : ''}${enCours ? ` · ${enCours} dehors` : ''}`)),
+      el('div', { class: 'tableau-cadre', style: 'margin:0 10px 10px' }, tableau),
+      el('div', { style: 'padding:0 10px 6px' }, l.map(d => carteDep(d)))));
+  });
+  return det;
+}
+
 function ouvrirFenetre(contenu, options) {
   // On remplace la fenêtre ouverte sans « fermer » le kit en cours (choix d'un article, scanner, questions…)
   if (etat.fenetre) { etat.fenetre.remove(); etat.fenetre = null; }
-  // options.fixe : toucher à côté ne ferme pas (un formulaire en cours ne se perd pas par erreur)
-  const fixe = !!(options && options.fixe);
+  // options.fixe : toucher à côté ne ferme pas (un formulaire en cours ne se perd pas par erreur) ; retenu sur le contenu,
+  // pour quand on y revient (après le choix d'un article, d'une bobine…)
+  if (options && options.fixe && contenu.dataset) contenu.dataset.fixe = '1';
+  const fixe = !!(contenu.dataset && contenu.dataset.fixe === '1');
   const voile = el('div', { class: 'voile', onclick: ev => { if (ev.target === voile && !fixe) fermerFenetre(); } }, el('div', { class: 'fenetre' }, contenu));
   document.body.append(voile);
   etat.fenetre = voile;
@@ -1151,11 +1935,12 @@ function editeurKit(k0) {
 }
 
 /** Ajouter un article au panier : recherche en haut, tout le stock à dérouler en dessous. */
-function choisirArticle(brouillon, retour) {
+function choisirArticle(brouillon, retour, ajouteur, titre) {
   const zone = el('div');
   const champ = el('input', { type: 'search', placeholder: 'Réf ou nom (ex. coude 80 blanc)' });
   const res = el('div', { class: 'choix' });
-  const ajouter = (t, o) => { ouvrirFenetre(zonePanier); ajouterAuKit(brouillon, t, o, retour); };
+  // ajouteur : ajouterAuKit (kit vente) ou ajouterAuDepart (kit déploiement)
+  const ajouter = (t, o) => { ouvrirFenetre(zonePanier); (ajouteur || ajouterAuKit)(brouillon, t, o, retour); };
   const zonePanier = etat.fenetre.firstChild.firstChild;
   function dessiner() {
     vider(res);
@@ -1184,7 +1969,7 @@ function choisirArticle(brouillon, retour) {
     }
   }
   champ.addEventListener('input', dessiner);
-  zone.append(el('h2', {}, 'Ajouter au kit'), champ, res,
+  zone.append(el('h2', {}, titre || 'Ajouter au kit'), champ, res,
     el('button', { class: 'second', style: 'width:100%;margin-top:10px', onclick: () => { ouvrirFenetre(zonePanier); retour(); } }, 'Retour au panier'));
   dessiner();
   ouvrirFenetre(zone);
@@ -1368,7 +2153,7 @@ function codeDouchette(code) {
   if (kit && etat.fenetre) {
     const x = trouverParCode(code);
     if (!x) { alert(`Code inconnu : ${code}`); return; }
-    ajouterAuKit(kit.brouillon, x.t, x.o, kit.dessiner);
+    (kit.ajouteur || ajouterAuKit)(kit.brouillon, x.t, x.o, kit.dessiner);
     return;
   }
   ouvrirArticleScanne(code);
@@ -1519,6 +2304,7 @@ async function pageComptes(corps) {
   corps.append(liste,
     el('button', { class: 'principal', onclick: () => fenetreCompte(null) }, '+ Nouveau compte'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => ecranChangement(false) }, 'Changer mon mot de passe ou mon identifiant'),
+    blocAppareils(),
     // Sanji, 11/11 : « Sortir » devient « Déconnexion », en bas de Comptes
     el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: () => {
       if (confirm('Te déconnecter de cet appareil ? Il faudra retaper ton identifiant et ton mot de passe.')) seDeconnecter();
@@ -1537,6 +2323,46 @@ async function pageComptes(corps) {
           const x = await rpc('desactiver_compte', { ...moi(), p_compte: c.id }); alert(x.message); principal('comptes');
         } }, 'Retirer')))));
   } catch (e) { vider(liste).append(el('p', { class: 'erreur' }, e.message)); }
+}
+
+/**
+ * Sanji, 11/11 : « un déployable pour les appareils autorisés (renommer appareil) : rien que moi j'en ai 5 ».
+ * La liste des appareils autorisés (le téléphone de l'appli, chaque navigateur connecté au site) ; on peut leur donner un nom.
+ * Autoriser ou retirer un appareil reste dans Supabase.
+ */
+function blocAppareils() {
+  const zone = el('div', { style: 'padding:0 12px 10px' }, el('p', { class: 'aide' }, 'Chargement…'));
+  let charge = false;
+  async function charger() {
+    try {
+      const r = await rpc('liste_appareils', moi());
+      vider(zone);
+      if (!r.ok) { zone.append(el('p', { class: 'erreur' }, r.message)); return; }
+      const l = r.appareils || [];
+      det.querySelector('summary').textContent = `Appareils autorisés (${l.length})`;
+      l.forEach(a => {
+        const nom = a.libelle || a.modele || a.id;
+        const quoi = [a.navigateur ? `site${a.compte ? ' · compte ' + a.compte + (a.compte_actif ? '' : ' (retiré)') : ''}` : `appli${a.nom ? ' · ' + a.nom : ''}`,
+          a.libelle && a.modele ? a.modele : null,
+          a.derniere_synchro ? `vu le ${jourHeure(a.derniere_synchro)}` : null].filter(Boolean).join(' · ');
+        zone.append(el('div', { class: 'rangee', style: 'padding:8px 0;border-bottom:1px solid var(--ligne)' },
+          el('div', { class: 'etire' },
+            el('div', { style: 'font-weight:700' }, nom, a.moi ? el('span', { class: 'pastille p-OK', style: 'margin-left:8px' }, 'cet appareil') : null),
+            el('div', { class: 'aide' }, quoi),
+            el('div', { class: 'aide', style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, a.id)),
+          el('button', { class: 'petit', onclick: async () => {
+            const v = prompt('Nom de cet appareil (ex. PC du bureau, Firefox) — vide pour effacer :', a.libelle || '');
+            if (v === null) return;
+            try { const x = await rpc('renommer_appareil', { ...moi(), p_cible: a.id, p_libelle: v }); if (!x.ok) alert(x.message); await charger(); }
+            catch (e) { alert(e.message); }
+          } }, 'Renommer')));
+      });
+      zone.append(el('p', { class: 'aide', style: 'margin-top:8px' }, 'Pour retirer un appareil (perdu, changé…) : dans l\'appli de Yannick, avec le code magasinier.'));
+    } catch (e) { vider(zone).append(el('p', { class: 'erreur' }, e.message)); }
+  }
+  const det = el('details', { class: 'dossier', style: 'margin-top:16px', ontoggle: () => { if (det.open && !charge) { charge = true; charger(); } } },
+    el('summary', {}, 'Appareils autorisés'), zone);
+  return det;
 }
 
 function fenetreCompte(c) {
