@@ -14,7 +14,8 @@ const CONFIG = {
   url: 'https://phrdduaciipoxvodfzth.supabase.co',
   cle: 'sb_publishable_On7Xm61ra2aDalj1RiBzeg_gWJYdXAg',
 };
-const TABLES = ['accessoires', 'bobines', 'descentes', 'zones', 'reglages', 'kits', 'demandes'];
+// carnet : la liste des fournisseurs, pour « Modifier l'article » (⚙)
+const TABLES = ['accessoires', 'bobines', 'descentes', 'zones', 'reglages', 'kits', 'demandes', 'carnet'];
 const ARTICLES = ['accessoires', 'bobines', 'descentes'];
 
 // ------------------------------------------------------------------ petits outils
@@ -401,7 +402,8 @@ function ecranRappel() {
 // ------------------------------------------------------------------ l'écran principal
 
 // Sanji, 11/11 : « À signaler » devient ⚠ (avec le nombre), pour gagner de la place
-const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['idees', '✎ Idées'], ['comptes', 'Comptes']];
+// L'onglet « Comptes » devient « Réglages » (11/11) : il porte aussi le type d'affichage du stock et la déconnexion
+const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['idees', '✎ Idées'], ['comptes', 'Réglages']];
 
 function principal(onglet) {
   etat.onglet = onglet || 'stock';
@@ -415,15 +417,17 @@ function principal(onglet) {
     ? el('span', { class: 'alerte' }, '⚠︎' + (nSig ? ` ${nSig}` : ''))
     : lib + (k === 'kits' && nKits ? ` (${nKits})` : ''))));
   const corps = el('main');
+  // En-tête comme l'appli (Sanji, 11/11) : le titre et le prénom dessous ; à droite Scan et la synchro, même taille,
+  // l'icône en grand et le mot en petit ; l'heure de la dernière lecture est dans le bouton de synchro.
+  // « Déconnexion » est en bas de l'onglet Comptes.
   vider(app).append(
     el('header', {},
       el('div', { class: 'ligne1' },
-        el('h1', {}, 'Stock Dépôt'),
-        el('button', { class: 'discret', title: 'Scanner une étiquette', onclick: () => scanner(code => ouvrirArticleScanne(code)) }, '▣ Scanner'),
-        el('button', { class: 'discret', title: 'Relire le document', onclick: rafraichir }, '⟳'),
-        el('button', { class: 'discret', onclick: () => ecranChangement(false) }, etat.identifiant || 'Moi'),
-        el('button', { class: 'discret', onclick: seDeconnecter }, 'Sortir')),
-      el('div', { class: 'qui' }, `Lu à ${etat.charge ? fmtHeure.format(etat.charge) : '?'}`),
+        el('div', { class: 'titre' }, el('h1', {}, 'Stock Dépôt'), el('div', { class: 'qui' }, etat.identifiant || '?')),
+        el('button', { class: 'tuile', title: 'Scanner une étiquette', onclick: () => scanner(code => ouvrirArticleScanne(code)) },
+          el('span', { class: 'icone' }, '▣'), el('span', {}, 'Scan')),
+        el('button', { class: 'tuile', title: 'Relire le document', onclick: rafraichir },
+          el('span', { class: 'icone' }, '⟳'), el('span', {}, `synchro ${etat.charge ? fmtHeure.format(etat.charge) : '—'}`))),
       nav),
     corps);
   ({ stock: pageStock, signaler: pageSignaler, kits: pageKits, idees: pageIdees, comptes: pageComptes })[etat.onglet](corps);
@@ -451,8 +455,226 @@ function ligneArticle(t, o, options) {
   const action = surAjout ? () => surAjout(t, o) : () => { detail.hidden = !detail.hidden; if (!detail.hidden) remplirDetail(detail, t, o); };
   const ligne = el('div', { class: 'article', onclick: action },
     el('div', { class: 'etire' }, el('div', { class: 'nom' }, o.nom_court || o.nom || o.ref), el('div', { class: 'ref' }, o.ref || o.id)),
-    el('div', { class: 'valeur' }, el('div', {}, valeurCourte(t, o) || '—'), pastille(s)));
+    el('div', { class: 'valeur' }, el('div', {}, valeurCourte(t, o) || '—'), pastille(s)),
+    surAjout ? null : boutonRoue(t, o));
   return [ligne, detail];
+}
+
+// ------------------------------------------------------------------ ⚙ Modifier un article
+
+/** Sanji, 11/11 : « sur le site on ne peut pas faire d'appui long : une petite roue crantée sur les articles pour les modifier ».
+ *  Les mêmes champs et les mêmes règles que « Modifier l'article » de l'appli (appui long, Edition.kt). */
+function boutonRoue(t, o) {
+  return el('button', { class: 'roue', type: 'button', title: 'Modifier l\'article', 'aria-label': 'Modifier l\'article',
+    onclick: ev => { ev.stopPropagation(); editeurArticle(t, o); } }, '⚙︎');
+}
+
+const REF_VALIDE = /^[A-Z0-9][A-Z0-9./-]*$/;
+const AUTRE = '__autre__';
+
+/** Liste déroulante : options = [[valeur, libellé]] ; la valeur null (« rien ») s'écrit ''. */
+function choixListe(options, actuel) {
+  const s = el('select', {}, options.map(([v, lib]) => el('option', { value: v === null ? '' : v }, lib)));
+  s.value = actuel === null || actuel === undefined ? '' : actuel;
+  return s;
+}
+
+/** Champ nombre : on garde le texte de départ pour ne rien réécrire si on n'y a pas touché. */
+function champNombre(v, indice) {
+  const txt = num(v) === null ? '' : nombreJoli(num(v));
+  const c = el('input', { type: 'text', inputmode: 'decimal', value: txt, placeholder: indice });
+  c.dataset.initial = txt;
+  return c;
+}
+/** [bon ?, valeur] : vide → null ; pas un nombre ou négatif → pas bon ; inchangé → l'ancienne valeur exacte. */
+function lireNombre(c, ancien) {
+  if (!c) return [true, null];
+  const t = c.value.trim();
+  if (t === c.dataset.initial) return [true, num(ancien)];
+  if (!t) return [true, null];
+  const d = Number(t.replace(',', '.'));
+  if (isNaN(d)) return [false, null];
+  return [d >= 0, d];
+}
+function pareil(a, b) {
+  const x = a === undefined ? null : a, y = b === undefined ? null : b;
+  if (x === null || y === null) return x === null && y === null;
+  if (typeof x === 'number' || typeof y === 'number') { const nx = Number(x), ny = Number(y); if (!isNaN(nx) && !isNaN(ny)) return nx === ny; }
+  return String(x) === String(y);
+}
+/** Référence (ou identifiant) déjà prise par un autre article, corbeille comprise. */
+function refPrise(ref, tSauf, idSauf) {
+  const r = ref.toUpperCase();
+  return ARTICLES.some(t => (etat.donnees[t] || []).some(o => !(t === tSauf && o.id === idSauf)
+    && (String(o.ref || '').toUpperCase() === r || String(o.id || '').toUpperCase() === r)));
+}
+/** Largeurs (bobines) ou diamètres (descentes) existants, dans leur ordre. */
+function groupesDe(t) {
+  const vus = new Map();
+  tous(t).forEach(o => { if (o.groupe && !vus.has(o.groupe)) vus.set(o.groupe, num(o.g_ordre) ?? 99); });
+  return [...vus.entries()].sort((a, b) => a[1] - b[1]).map(x => x[0]);
+}
+function gOrdre(t, g) {
+  const o = (etat.donnees[t] || []).find(x => x.groupe === g && num(x.g_ordre) !== null);
+  if (o) return num(o.g_ordre);
+  return Math.max(0, ...(etat.donnees[t] || []).map(x => num(x.g_ordre) ?? 0)) + 1;
+}
+function ordreSuivant(t, g) {
+  return Math.max(0, ...(etat.donnees[t] || []).filter(x => x.groupe === g).map(x => num(x.ordre) ?? 0)) + 1;
+}
+const triFr = (a, b) => a.localeCompare(b, 'fr');
+
+function editeurArticle(t, o0) {
+  const o = trouver(t, o0.id) || o0;
+  const champ = (v, indice, extra) => el('input', { type: 'text', value: v === null || v === undefined ? '' : String(v), placeholder: indice, ...(extra || {}) });
+  const nom = champ(o.nom, t === 'bobines' ? 'ex. Bobine 400 mm Gris 9006 / Cuivre' : t === 'descentes' ? 'ex. Descente Ø100 Anthracite 7016' : 'ex. Fond G300 Blanc');
+  const nomCourt = champ(o.nom_court, 'court, pour l\'étiquette (26 caractères conseillés)');
+  const ref = champ(o.ref, 'ex. FON-G300-BLA', { autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false' });
+
+  // Bobines et descentes : couleur, largeur ou diamètre (« Autre… » ouvre un champ libre)
+  let couleur = null, groupe = null, groupeAutre = null;
+  const titreGroupe = t === 'bobines' ? 'Largeur' : 'Diamètre';
+  if (t !== 'accessoires') {
+    couleur = champ(o.couleur, 'ex. Anthracite 7016');
+    const gs = groupesDe(t);
+    if (o.groupe && !gs.includes(o.groupe)) gs.push(o.groupe);
+    groupe = choixListe([[null, '— choisir —'], ...gs.map(g => [g, g]), [AUTRE, 'Autre…']], o.groupe);
+    groupeAutre = champ('', t === 'bobines' ? 'ex. 330 mm' : 'ex. Ø120', { hidden: true });
+    groupe.addEventListener('change', () => { groupeAutre.hidden = groupe.value !== AUTRE; if (!groupeAutre.hidden) groupeAutre.focus(); });
+  }
+
+  // Rangement et achat
+  const zs = tous('zones').filter(z => !z.est_groupe).sort((a, b) => triFr(String(a.id), String(b.id)));
+  const optZones = zs.map(z => [z.id, `${z.id} · ${z.libelle || ''}`]);
+  if (o.zone && !zs.some(z => z.id === o.zone)) optZones.push([o.zone, o.zone]);
+  const zone = choixListe([[null, '— choisir —'], ...optZones], o.zone);
+  let famille = null;
+  if (t === 'accessoires') {
+    const fs = [...new Set(tous('accessoires').map(x => x.famille).filter(Boolean).concat(o.famille ? [o.famille] : []))].sort(triFr);
+    famille = choixListe([...fs.map(f => [f, f]), [null, 'Aucune']], o.famille);
+  }
+  // Fournisseurs : ceux du carnet (comme l'appli) ; à défaut, ceux déjà notés sur les articles
+  let fours = tous('carnet').filter(c => c.type === 'fournisseur').map(c => String(c.libelle || '').trim()).filter(Boolean);
+  if (!fours.length) fours = ARTICLES.flatMap(x => tous(x).map(a => a.fournisseur)).filter(Boolean);
+  if (o.fournisseur) fours.push(o.fournisseur);
+  const fournisseur = choixListe([...[...new Set(fours)].sort(triFr).map(f => [f, f]), [null, 'Aucun (N/A)']], o.fournisseur);
+
+  // Façon de compter (accessoires), contenance et alerte : ce qui s'affiche dépend de la façon de compter
+  let mode = o.mode || 'quantite';
+  const modes = el('div', { class: 'puces' });
+  const aideMode = el('p', { class: 'aide' });
+  const titreSeuil = el('label', {});
+  const seuil = champNombre(o.seuil, 'vide = alerte seulement quand il n\'y en a plus');
+  const aideSeuil = el('p', { class: 'aide' });
+  const blocSeuil = el('div', {}, titreSeuil, seuil, aideSeuil);
+  let unite = null, parCarton = null, blocQuantite = null;
+  if (t === 'accessoires') {
+    const us = [['cartons', 'cartons'], ['rouleaux', 'rouleaux'], ['unités', 'unités']];
+    tous('accessoires').map(x => x.unite).concat(o.unite ? [o.unite] : [])
+      .forEach(u => { if (u && !us.some(x => x[0] === u)) us.push([u, u]); });
+    unite = choixListe([[null, 'pièces (rien d\'écrit)'], ...us], o.unite);
+    parCarton = champNombre(o.par_carton, 'ex. 100 (facultatif)');
+    blocQuantite = el('div', {}, el('label', {}, 'Unité'), unite, el('label', {}, 'Contenance d\'un carton'), parCarton);
+  } else if (t === 'descentes') {
+    parCarton = champNombre(o.par_carton, 'ex. 7');
+  }
+  function majMode() {
+    if (t === 'accessoires') {
+      vider(modes).append(...[['quantite', 'Quantité'], ['niveau', 'Niveau'], ['mixte', 'Mixte']].map(([k, lib]) =>
+        el('button', { type: 'button', class: k === mode ? 'actif' : '', onclick: () => { mode = k; majMode(); } }, lib)));
+      aideMode.textContent = mode === 'niveau' ? 'On note seulement le niveau du carton ouvert (0/3 à 3/3). Alerte à 1/3 ou 0/3.'
+        : mode === 'mixte' ? 'Cartons fermés, plus le niveau du carton ouvert.' : 'On compte des pièces ou des cartons.';
+      titreSeuil.textContent = mode === 'mixte' ? 'Seuil : cartons fermés' : 'Seuil d\'alerte';
+      aideSeuil.textContent = mode === 'mixte' ? 'Alerte quand il reste autant de cartons fermés ou moins, et l\'ouvert à 1/3 ou 0/3.'
+        : 'Alerte quand il en reste autant ou moins.';
+      blocQuantite.hidden = blocSeuil.hidden = mode === 'niveau';
+    } else {
+      titreSeuil.textContent = 'Seuil (mètres)';
+      aideSeuil.textContent = t === 'bobines' ? 'Alerte quand aucune bobine n\'a au moins ce métrage.' : 'Alerte quand il reste autant de mètres ou moins.';
+    }
+  }
+  majMode();
+  const signaler = el('input', { type: 'checkbox', checked: o.signaler !== false });
+  const note = el('textarea', { placeholder: 'facultatif' }, o.note || '');
+  const msg = el('p', { class: 'erreur' });
+
+  async function enregistrer(bouton) {
+    msg.textContent = '';
+    const net = x => { const v = String(x || '').trim(); return v || null; };
+    const n = net(nom.value);
+    if (!n) { msg.textContent = 'Il faut un nom.'; return; }
+    const r = ref.value.trim().toUpperCase().replace(/\s+/g, '-');
+    if (!REF_VALIDE.test(r)) { msg.textContent = 'Référence invalide : lettres sans accent, chiffres et tirets (ex. FON-G300-BLA).'; return; }
+    const refChangee = r !== String(o.ref || '').toUpperCase();
+    if (refChangee && refPrise(r, t, o.id)) { msg.textContent = `La référence ${r} existe déjà (corbeille comprise).`; return; }
+    if (!zone.value) { msg.textContent = 'Choisis un emplacement.'; return; }
+    let g = null;
+    if (groupe) {
+      g = groupe.value === AUTRE ? net(groupeAutre.value) : net(groupe.value);
+      if (!g) { msg.textContent = t === 'bobines' ? 'Choisis une largeur.' : 'Choisis un diamètre.'; return; }
+    }
+    const [seuilOk, s] = lireNombre(seuil, o.seuil);
+    if (!seuilOk) { msg.textContent = 'Le seuil doit être un nombre.'; return; }
+    const [pcOk, pc] = lireNombre(parCarton, o.par_carton);
+    if (!pcOk) { msg.textContent = 'La contenance doit être un nombre.'; return; }
+
+    const valeurs = { nom: n, nom_court: net(nomCourt.value), ref: r, zone: zone.value, fournisseur: fournisseur.value || null,
+      signaler: signaler.checked, note: net(note.value) };
+    if (t === 'accessoires') {
+      valeurs.famille = famille.value || null;
+      valeurs.mode = mode;
+      if (mode !== 'niveau') { valeurs.unite = unite.value || null; valeurs.par_carton = pc; valeurs.seuil = s; }   // en niveau, on n'y touche pas
+    } else {
+      valeurs.couleur = net(couleur.value);
+      valeurs.groupe = g;
+      valeurs.seuil = s;
+      if (t === 'descentes') valeurs.par_carton = pc;
+    }
+    // Une case absente vaut sa valeur par défaut (alerte : oui ; façon de compter : quantité) : pas d'écriture inutile
+    const ancienne = k => k === 'signaler' ? o.signaler !== false : k === 'mode' ? (o.mode || 'quantite') : o[k];
+    const champs = {};
+    Object.entries(valeurs).forEach(([k, v]) => { if (!pareil(ancienne(k), v)) champs[k] = v; });
+    // Largeur ou diamètre changé : on le range à la fin de son nouveau groupe
+    if (t !== 'accessoires' && 'groupe' in champs) { champs.g_ordre = gOrdre(t, g); champs.ordre = ordreSuivant(t, g); }
+    if (!Object.keys(champs).length) { fermerFenetre(); return; }
+    bouton.disabled = true;
+    try {
+      await ecrire(t, o.id, champs);
+      fermerFenetre();
+      principal(etat.onglet);
+      if (refChangee) alert('Enregistré. La référence a changé : pense à réimprimer l\'étiquette.');
+    } catch (e) { msg.textContent = e.message; bouton.disabled = false; }
+  }
+
+  async function corbeille(bouton) {
+    if (!confirm(`Mettre « ${o.nom || o.ref} » à la corbeille ?\n\nIl disparaît du stock et des listes. Yannick peut l'en ressortir depuis l'appli.`)) return;
+    bouton.disabled = true;
+    try { await ecrire(t, o.id, { supprime: true }); fermerFenetre(); principal(etat.onglet); }
+    catch (e) { msg.textContent = e.message; bouton.disabled = false; }
+  }
+
+  ouvrirFenetre(ajouterA(el('div', {}),
+    el('h2', {}, 'Modifier l\'article'),
+    el('label', {}, 'Nom'), nom,
+    el('label', {}, 'Nom court (étiquette)'), nomCourt,
+    el('label', {}, 'Référence = code-barres'), ref,
+    el('p', { class: 'aide' }, 'La changer change le code-barres : il faudra réimprimer l\'étiquette.'),
+    couleur ? [el('label', {}, 'Couleur'), couleur] : null,
+    groupe ? [el('label', {}, titreGroupe), groupe, groupeAutre] : null,
+    el('label', {}, 'Emplacement'), zone,
+    famille ? [el('label', {}, 'Famille'), famille, el('p', { class: 'aide' }, 'Sert au rangement à l\'écran (pattes par couleur, accessoires gouttière par couleur…).')] : null,
+    el('label', {}, 'Fournisseur'), fournisseur,
+    t === 'accessoires' ? [el('label', {}, 'Façon de compter'), modes, aideMode, blocQuantite] : null,
+    t === 'descentes' ? [el('label', {}, 'Tuyaux par carton'), parCarton] : null,
+    blocSeuil,
+    el('label', { class: 'case' }, signaler, 'Prévenir quand il en manque (À signaler)'),
+    el('label', {}, 'Note'), note,
+    el('p', { class: 'aide', style: 'margin-top:12px' }, `Dernier changement : ${o.maj_par || '?'}${o.maj ? ' le ' + jour(o.maj) : ''}`),
+    msg,
+    el('button', { class: 'principal', onclick: ev => enregistrer(ev.currentTarget) }, 'Enregistrer'),
+    el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: ev => corbeille(ev.currentTarget) }, 'Mettre à la corbeille'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')),
+    { fixe: true });   // on ne perd pas la saisie en touchant à côté par erreur
 }
 
 function remplirDetail(d, t, o) {
@@ -531,7 +753,15 @@ function pageStock(corps) {
   function dessiner() {
     vider(liste);
     let rien = true;
+    const enTableau = affichageStock() === 'tableau';
     for (const e of arbreZones()) {
+      if (enTableau) {
+        const tab = tableauEntrepot(e, garde, toutOuvrir, dessiner);
+        if (!tab) continue;
+        rien = false;
+        liste.append(el('div', { class: 'titre-section' }, `Entrepôt ${e.entrepot}` + (e.entrepot === 1 ? ' · accessoires' : ' · alu et zinc')), tab);
+        continue;
+      }
       const blocs = e.enfants.map(n => dossierZone(n)).filter(Boolean);
       if (!blocs.length) continue;
       rien = false;
@@ -543,6 +773,77 @@ function pageStock(corps) {
   champ.addEventListener('input', () => { etat.recherche = champ.value; dessiner(); });
   dessinerPuces(); dessiner();
   corps.append(champ, puces, liste);
+}
+
+// ------------------------------------------------------------------ Stock en tableau (façon Excel)
+
+/** Sanji, 11/11 : « un aperçu plus Excel serait plus simple pour eux, avec des trucs qui peuvent se déployer ;
+ *  possible d'avoir les deux ? réglable dans les paramètres en type d'affichage des stocks ».
+ *  Le choix est retenu sur l'appareil (chacun le sien) ; d'office : le tableau. */
+function affichageStock() { return lireStockage('sd_affichage') === 'dossiers' ? 'dossiers' : 'tableau'; }
+
+const COLONNES = ['Article', 'Réf.', 'Stock', 'État', 'Seuil', 'Fournisseur', 'Compté le', ''];
+
+function seuilTexte(t, o) {
+  if (t === 'accessoires' && o.mode === 'niveau') return '1/3';
+  const s = num(o.seuil);
+  if (s === null) return '—';
+  if (t !== 'accessoires') return `${nombreJoli(s)} ml`;
+  if (o.mode === 'mixte') return `${nombreJoli(s)} carton(s)`;
+  return nombreJoli(s) + (o.unite ? ' ' + o.unite : '');
+}
+
+/** Un entrepôt en tableau : une ligne par article, des lignes de groupe (zones, rayons) qui se plient et se déplient. */
+function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
+  function collecter(n) {
+    if (n.enfants.length) {
+      const sous = n.enfants.map(collecter).filter(Boolean);
+      const articles = sous.flatMap(s => s.articles);
+      return articles.length ? { z: n.zone, sous, articles } : null;
+    }
+    const articles = articlesDuRayon(n.zone.id).filter(x => garde(x.t, x.o));
+    return articles.length ? { z: n.zone, sous: null, articles } : null;
+  }
+  const blocs = e.enfants.map(collecter).filter(Boolean);
+  if (!blocs.length) return null;
+  const corpsT = el('tbody');
+  function rendre(b, niveau) {
+    const cle = 'z:' + b.z.id;
+    const ouvert = toutOuvrir() || etat.ouverts.has(cle);
+    const nAlerte = b.articles.filter(x => enAlerte(statut(x.t, x.o))).length;
+    const nb = b.articles.length;
+    corpsT.append(el('tr', { class: 'groupe', onclick: () => { if (ouvert) etat.ouverts.delete(cle); else etat.ouverts.add(cle); redessiner(); } },
+      el('td', { colspan: COLONNES.length },
+        el('span', { class: 'colle', style: `padding-left:${niveau * 18}px` }, `${ouvert ? '▾' : '▸'} ${b.z.id} · ${b.z.libelle || ''}`,
+          el('span', { class: 'compte' + (nAlerte ? ' alerte' : '') }, nAlerte ? `${nAlerte} à signaler` : `${nb} article${nb > 1 ? 's' : ''}`)))));
+    if (!ouvert) return;
+    if (b.sous) b.sous.forEach(s => rendre(s, niveau + 1));
+    else b.articles.forEach(x => corpsT.append(...ligneTableau(x.t, x.o)));
+  }
+  blocs.forEach(b => rendre(b, 0));
+  return el('div', { class: 'tableau-cadre' },
+    el('table', { class: 'tableau' },
+      el('thead', {}, el('tr', {}, COLONNES.map((c, i) => el('th', { class: i === 0 ? 'col1' : '' }, c)))),
+      corpsT));
+}
+
+/** Une ligne d'article ; la toucher ouvre le détail juste dessous (comme en dossiers). */
+function ligneTableau(t, o) {
+  const s = statut(t, o);
+  const contenu = el('div', { class: 'detail colle' });
+  const detail = el('tr', { class: 'detail-ligne', hidden: true }, el('td', { colspan: COLONNES.length }, contenu));
+  const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : ''), onclick: () => {
+    detail.hidden = !detail.hidden; if (!detail.hidden) remplirDetail(contenu, t, o);
+  } },
+    el('td', { class: 'col1', title: o.nom || o.ref }, o.nom_court || o.nom || o.ref),
+    el('td', { class: 'ref' }, o.ref || o.id),
+    el('td', { class: 'nombre' }, valeurCourte(t, o) || '—'),
+    el('td', {}, pastille(s)),
+    el('td', {}, seuilTexte(t, o)),
+    el('td', {}, o.fournisseur || '—'),
+    el('td', {}, o.compte ? jour(o.compte) : '—'),
+    el('td', { class: 'roue-case' }, boutonRoue(t, o)));
+  return [ligne, detail];
 }
 
 // ------------------------------------------------------------------ À signaler
@@ -624,10 +925,12 @@ function carteKit(k) {
       k.note ? el('div', { style: 'color:var(--accent);font-size:14px' }, k.note) : null));
 }
 
-function ouvrirFenetre(contenu) {
+function ouvrirFenetre(contenu, options) {
   // On remplace la fenêtre ouverte sans « fermer » le kit en cours (choix d'un article, scanner, questions…)
   if (etat.fenetre) { etat.fenetre.remove(); etat.fenetre = null; }
-  const voile = el('div', { class: 'voile', onclick: ev => { if (ev.target === voile) fermerFenetre(); } }, el('div', { class: 'fenetre' }, contenu));
+  // options.fixe : toucher à côté ne ferme pas (un formulaire en cours ne se perd pas par erreur)
+  const fixe = !!(options && options.fixe);
+  const voile = el('div', { class: 'voile', onclick: ev => { if (ev.target === voile && !fixe) fermerFenetre(); } }, el('div', { class: 'fenetre' }, contenu));
   document.body.append(voile);
   etat.fenetre = voile;
 }
@@ -951,7 +1254,8 @@ function ouvrirArticleScanne(code) {
     el('div', { class: 'ref' }, x.o.ref),
     el('div', { class: 'rangee', style: 'margin:8px 0' }, pastille(statut(x.t, x.o)), el('strong', {}, valeurCourte(x.t, x.o) || '—')),
     d,
-    el('button', { class: 'second', style: 'width:100%;margin-top:10px', onclick: fermerFenetre }, 'Fermer')));
+    el('button', { class: 'second', style: 'width:100%;margin-top:10px', onclick: () => editeurArticle(x.t, x.o) }, '⚙︎ Modifier l\'article'),
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Fermer')));
 }
 
 // ------------------------------------------------------------------ ✎ Idées (les demandes des patrons à Yannick)
@@ -1070,11 +1374,23 @@ function pageIdees(corps) {
 // ------------------------------------------------------------------ Comptes
 
 async function pageComptes(corps) {
+  // Type d'affichage du stock (retenu sur cet appareil)
+  const choixAffichage = el('div', { class: 'puces' }, [['tableau', 'Tableau (façon Excel)'], ['dossiers', 'Dossiers']].map(([k, lib]) =>
+    el('button', { class: affichageStock() === k ? 'actif' : '', onclick: () => { ecrireStockage('sd_affichage', k); principal('comptes'); } }, lib)));
+  corps.append(
+    el('div', { class: 'titre-section', style: 'margin-top:4px' }, 'Type d\'affichage du stock'),
+    choixAffichage,
+    el('p', { class: 'aide' }, 'Tableau : une ligne par article, en colonnes ; les zones se plient et se déplient. Dossiers : des cartes par zone. Le choix est retenu sur cet appareil.'),
+    el('div', { class: 'titre-section' }, 'Comptes du site'));
   corps.append(el('p', { class: 'aide' }, 'Les comptes du site. Pour un oubli : donne un mot de passe provisoire (à dire à l\'oral) ; la personne choisira le sien en se connectant. Personne ne peut lire un mot de passe.'));
   const liste = el('div', {}, el('p', { class: 'aide' }, 'Chargement…'));
   corps.append(liste,
     el('button', { class: 'principal', onclick: () => fenetreCompte(null) }, '+ Nouveau compte'),
-    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => ecranChangement(false) }, 'Changer mon mot de passe ou mon identifiant'));
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => ecranChangement(false) }, 'Changer mon mot de passe ou mon identifiant'),
+    // Sanji, 11/11 : « Sortir » devient « Déconnexion », en bas de Comptes
+    el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: () => {
+      if (confirm('Te déconnecter de cet appareil ? Il faudra retaper ton identifiant et ton mot de passe.')) seDeconnecter();
+    } }, 'Déconnexion'));
   try {
     const r = await rpc('liste_comptes', moi());
     vider(liste);
