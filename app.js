@@ -353,24 +353,25 @@ async function demarrer() {
     // Rappel du mot de passe (Sanji : « une question à la première connexion, pour ne pas l'oublier ; s'ils ne veulent pas, ils refusent »)
     const rappel = lireStockage('sd_rappel');
     if (!rappel) return ecranQuestionRappel();
-    if (rappel === 'oui' && Date.now() - Number(lireStockage('sd_rappel_le') || 0) > 30 * 24 * 3600 * 1000) return ecranRappel();
+    // Sanji : « plutôt une fois par trimestre » → tous les 3 mois (91 jours)
+    if (rappel === 'oui' && Date.now() - Number(lireStockage('sd_rappel_le') || 0) > 91 * 24 * 3600 * 1000) return ecranRappel();
     await chargerTout();
     principal(etat.onglet);
   } catch (err) { ecranErreur(err); }
 }
 
-/** Une seule fois par appareil : veut-on qu'on redemande le mot de passe une fois par mois, pour ne pas l'oublier ? */
+/** Une seule fois par appareil : veut-on qu'on redemande le mot de passe tous les 3 mois, pour ne pas l'oublier ? */
 function ecranQuestionRappel() {
   const choisir = v => { ecrireStockage('sd_rappel', v); ecrireStockage('sd_rappel_le', String(Date.now())); demarrer(); };
   vider(app).append(el('div', { class: 'connexion carte' },
     el('h1', {}, 'Une petite question'),
     el('p', {}, 'Cet appareil se souvient de toi : tu n\'auras plus à taper ton mot de passe. Du coup, on l\'oublie vite…'),
-    el('p', {}, 'Veux-tu qu\'on te le redemande une fois par mois, juste pour ne pas l\'oublier ?'),
-    el('button', { class: 'principal', onclick: () => choisir('oui') }, 'Oui, une fois par mois'),
+    el('p', {}, 'Veux-tu qu\'on te le redemande tous les 3 mois, juste pour ne pas l\'oublier ?'),
+    el('button', { class: 'principal', onclick: () => choisir('oui') }, 'Oui, tous les 3 mois'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => choisir('non') }, 'Non merci')));
 }
 
-/** Le rappel mensuel : on retape son mot de passe (rien ne se bloque si on l'a oublié : on demande un provisoire à Yannick). */
+/** Le rappel trimestriel : on retape son mot de passe (rien ne se bloque si on l'a oublié : on demande un provisoire à Yannick). */
 function ecranRappel() {
   const mdp = el('input', { type: 'password', autocomplete: 'current-password', id: 'rappel' });
   const msg = el('p', { class: 'erreur' });
