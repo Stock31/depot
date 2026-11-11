@@ -105,7 +105,7 @@ table.tableau th, table.tableau td { padding: 7px 10px; border-bottom: 1px solid
 table.tableau th { position: sticky; top: 0; z-index: 3; background: var(--fond); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gris); }
 table.tableau td + td, table.tableau th + th { border-left: 1px solid var(--ligne); }
 /* Le nom de l'article passe à la ligne plutôt que d'être coupé */
-table.tableau .col1 { position: sticky; left: 0; z-index: 1; background: var(--carte); font-weight: 600; white-space: normal; overflow-wrap: anywhere; min-width: 110px; max-width: 42vw; }
+table.tableau .col1 { position: sticky; left: 0; z-index: 1; background: var(--carte); font-weight: 600; white-space: normal; overflow-wrap: break-word; min-width: 110px; max-width: 42vw; }
 table.tableau th.col1 { background: var(--fond); z-index: 4; }
 table.tableau tr.groupe td { background: var(--fond); font-weight: 700; cursor: pointer; white-space: normal; }
 table.tableau tr.groupe .colle { max-width: calc(100vw - 70px); }
