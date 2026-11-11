@@ -34,6 +34,9 @@ nav.onglets button { flex: 1 1 auto; background: transparent; border: 0; color: 
   padding: 10px 6px; font-weight: 600; font-size: 15px; white-space: nowrap; border-bottom: 3px solid transparent; }
 @media (max-width: 420px) { nav.onglets button { font-size: 14px; padding: 10px 4px; } }
 nav.onglets button.actif { opacity: 1; border-bottom-color: var(--sur-entete); }
+/* L'onglet ⚠ : pastille rouge vif toujours bien visible (même quand l'onglet n'est pas choisi) */
+nav.onglets button.signaler { opacity: 1; }
+nav.onglets .alerte { display: inline-block; background: #E0001B; color: #FFFFFF; border-radius: 999px; padding: 2px 10px; font-weight: 700; }
 main { padding: 12px 16px calc(40px + env(safe-area-inset-bottom)); }
 
 /* Briques */

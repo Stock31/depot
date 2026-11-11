@@ -407,9 +407,13 @@ function principal(onglet) {
   etat.onglet = onglet || 'stock';
   const nKits = tous('kits').filter(k => !k.pret).length;
   const nSig = ARTICLES.reduce((a, t) => a + tous(t).filter(o => ['SIGNALER', 'MANQUE'].includes(statut(t, o))).length, 0);
+  // Sanji, 11/11 : le ⚠ en rouge → pastille rouge vif (comme « manque »), lisible sur l'en-tête bleu, de jour comme de nuit.
+  // « ︎ » force le dessin du ⚠ en caractère simple : sans lui, l'iPhone le dessine en émoji jaune.
   const nav = el('nav', { class: 'onglets' }, ONGLETS.map(([k, lib]) => el('button', {
-    class: k === etat.onglet ? 'actif' : '', onclick: () => principal(k),
-  }, lib + (k === 'kits' && nKits ? ` (${nKits})` : '') + (k === 'signaler' && nSig ? ` ${nSig}` : ''))));
+    class: (k === etat.onglet ? 'actif ' : '') + k, onclick: () => principal(k),
+  }, k === 'signaler'
+    ? el('span', { class: 'alerte' }, '⚠︎' + (nSig ? ` ${nSig}` : ''))
+    : lib + (k === 'kits' && nKits ? ` (${nKits})` : ''))));
   const corps = el('main');
   vider(app).append(
     el('header', {},
