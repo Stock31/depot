@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Garde-fou : la page ne charge du code que depuis le site lui-même, et ne parle qu'au document (Supabase) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src 'self' https://phrdduaciipoxvodfzth.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Stock Dépôt">
+  <meta name="theme-color" content="#2D5B73">
+  <title>Stock Dépôt</title>
+  <!-- « ?v=… » change à chaque nouvelle version : les téléphones reprennent alors les fichiers à jour -->
+  <link rel="stylesheet" href="style.css?v=5">
+</head>
+<body>
+  <!-- Stock Dépôt, le site des patrons. Ce fichier ne contient aucune donnée : tout est lu dans le document (Supabase),
+       seulement après connexion (compte + code magasinier une fois par appareil). -->
+  <div id="app"><p class="attente">Chargement…</p></div>
+  <script src="app.js?v=5"></script>
+</body>
+</html>
