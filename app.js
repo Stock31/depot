@@ -835,7 +835,8 @@ const COLONNES_TOUTES = [
   { k: 'note', titre: 'Note', classe: 'note', val: (t, o) => o.note || '—', tri: (t, o) => o.note },
   { k: 'maj', titre: 'Dernier changement', val: (t, o) => o.maj ? `${jour(o.maj)}${o.maj_par ? ' · ' + o.maj_par : ''}` : '—', tri: (t, o) => o.maj },
 ];
-const COLONNES_ORIGINE = ['ref', 'stock', 'etat', 'seuil', 'fournisseur', 'compte'];
+// Le stock et l'état juste après le nom : sur téléphone, c'est ce qu'on voit sans faire défiler de côté
+const COLONNES_ORIGINE = ['stock', 'etat', 'ref', 'seuil', 'fournisseur', 'compte'];
 
 /** La disposition est retenue dans le document, au nom du compte : elle suit chaque patron sur tous ses appareils. */
 function cleDisposition() { return 'site_tableau_' + normaliser(etat.identifiant || 'moi').replace(/[^a-z0-9]+/g, '_'); }
@@ -948,7 +949,8 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
     corpsT.append(el('tr', { class: 'groupe', onclick: () => { if (ouvert) etat.ouverts.delete(cle); else etat.ouverts.add(cle); redessiner(); } },
       el('td', { colspan: nCol },
         el('span', { class: 'colle', style: `padding-left:${niveau * 18}px` }, `${ouvert ? '▾' : '▸'} ${b.z.id} · ${b.z.libelle || ''}`,
-          el('span', { class: 'compte' + (nAlerte ? ' alerte' : '') }, nAlerte ? `${nAlerte} à signaler` : `${nb} article${nb > 1 ? 's' : ''}`)))));
+          el('span', { class: 'compte' }, `${nb} article${nb > 1 ? 's' : ''}`),
+          nAlerte ? el('span', { class: 'compte alerte' }, `· ${nAlerte} à signaler`) : null))));
     if (!ouvert) return;
     if (b.sous) b.sous.forEach(s => rendre(s, niveau + 1));
     else trier(b.articles).forEach(x => corpsT.append(...ligneTableau(x.t, x.o, cols)));

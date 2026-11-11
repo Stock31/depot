@@ -97,14 +97,18 @@ button.roue { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 
 .p-SIGNALER { color: var(--rouge); background: var(--rouge-fond); }
 .manque { color: #FFFFFF; background: #E0001B; border-radius: 8px; padding: 6px 10px; font-weight: 700; margin: 6px 0; }
 /* Stock en tableau (façon Excel) : défile de côté sur téléphone, la colonne Article reste visible */
-.tableau-cadre { overflow-x: auto; border: 1px solid var(--ligne); border-radius: 12px; background: var(--carte); margin: 0 0 10px; }
+/* Le tableau défile dans son cadre (comme une feuille Excel) : les titres de colonnes restent en haut, la colonne Article à gauche */
+.tableau-cadre { overflow: auto; max-height: calc(100vh - 130px); max-height: calc(100dvh - 130px);
+  border: 1px solid var(--ligne); border-radius: 12px; background: var(--carte); margin: 0 0 10px; }
 table.tableau { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 14px; }
 table.tableau th, table.tableau td { padding: 7px 10px; border-bottom: 1px solid var(--ligne); text-align: left; white-space: nowrap; vertical-align: middle; }
-table.tableau th { background: var(--fond); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gris); }
+table.tableau th { position: sticky; top: 0; z-index: 3; background: var(--fond); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gris); }
 table.tableau td + td, table.tableau th + th { border-left: 1px solid var(--ligne); }
-table.tableau .col1 { position: sticky; left: 0; z-index: 1; background: var(--carte); font-weight: 600; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
-table.tableau th.col1 { background: var(--fond); z-index: 2; }
-table.tableau tr.groupe td { background: var(--fond); font-weight: 700; cursor: pointer; }
+/* Le nom de l'article passe à la ligne plutôt que d'être coupé */
+table.tableau .col1 { position: sticky; left: 0; z-index: 1; background: var(--carte); font-weight: 600; white-space: normal; overflow-wrap: anywhere; min-width: 110px; max-width: 42vw; }
+table.tableau th.col1 { background: var(--fond); z-index: 4; }
+table.tableau tr.groupe td { background: var(--fond); font-weight: 700; cursor: pointer; white-space: normal; }
+table.tableau tr.groupe .colle { max-width: calc(100vw - 70px); }
 table.tableau tr.groupe .compte { margin-left: 10px; font-weight: 600; font-size: 13px; color: var(--gris); }
 table.tableau tr.groupe .compte.alerte { color: var(--rouge); }
 table.tableau .colle { position: sticky; left: 10px; display: inline-block; }
