@@ -318,7 +318,7 @@ function pronostic(x, debut, fin, delai) {
   const eligible = x.unite !== 'niveau' && x.t !== 'bobines';      // bobines : le seuil compte la plus longue, pas le total
   return {
     jours, stock, parJour,
-    tient: parJour > 0 && stock !== null ? stock / parJour : null,
+    tient: parJour > 0 && stock !== null && x.unite !== 'niveau' ? stock / parJour : null,
     conseille: eligible && parJour > 0 ? Math.ceil(parJour * delai * MARGE_SEUIL) : null,
   };
 }
