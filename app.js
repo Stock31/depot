@@ -2858,6 +2858,14 @@ async function pageComptes(corps) {
   // Sanji, 11/11 : les comptes et la coche admin sont réservés aux admins (« un admin minimum est obligatoire »)
   // Sanji, 12/11 : la coche Magasinier remplace le code magasinier (« un peu comme les rôles sur Discord »)
   const liste = el('div', {}, el('p', { class: 'aide' }, etat.admin ? 'Chargement…' : 'Réservé aux admins : demande à Yannick.'));
+  // Sanji, 12/11 : « je ne peux pas cliquer sur Déconnexion » : la fenêtre « Te déconnecter ? » ne s'ouvre pas dans
+  // certains navigateurs (celui de l'appli Claude), qui répondent « non » tout seuls. On confirme sur le bouton lui-même.
+  const boutonDeco = el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: () => {
+    if (boutonDeco.dataset.arme === 'oui') return seDeconnecter();
+    boutonDeco.dataset.arme = 'oui';
+    boutonDeco.textContent = 'Touche encore pour te déconnecter (il faudra retaper ton mot de passe)';
+    setTimeout(() => { boutonDeco.dataset.arme = ''; boutonDeco.textContent = 'Déconnexion'; }, 6000);
+  } }, 'Déconnexion');
   ajouterA(corps,
     etat.admin ? el('p', { class: 'aide' }, 'Les coches font les droits, comme des rôles : sans coche = lecture seule (le stock, dans l\'appli) ; ☑ Magasinier = tout voir et modifier, sur l\'appli et le site ; ☑ Admin = en plus les comptes, les coches et les appareils.') : null,
     etat.admin ? el('p', { class: 'aide' }, 'Pour un oubli : donne un mot de passe provisoire (à dire à l\'oral) ; la personne choisira le sien en se connectant. Personne ne peut lire un mot de passe.') : null,
@@ -2865,9 +2873,7 @@ async function pageComptes(corps) {
     etat.admin ? el('button', { class: 'principal', onclick: () => fenetreCompte(null) }, '+ Nouveau compte') : null,
     blocAppareils(),
     // Sanji, 11/11 : « Sortir » devient « Déconnexion », en bas de Comptes
-    el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: () => {
-      if (confirm('Te déconnecter de cet appareil ? Il faudra retaper ton identifiant et ton mot de passe.')) seDeconnecter();
-    } }, 'Déconnexion'));
+    boutonDeco);
   if (!etat.admin) return;
   try {
     const r = await rpc('liste_comptes', moi());
