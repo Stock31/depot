@@ -1147,8 +1147,10 @@ function ligneTableau(t, o, cols) {
   const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : '') + (choisie ? ' choisie' : ''),
       onclick: () => { if (coche) coche.click(); else basculer(); } },
     el('td', { class: 'col1', title: o.nom || o.ref }, coche, o.nom_court || o.nom || o.ref),
+    // Sanji : « il faut pouvoir modifier les colonnes à la case » : même en « ☑ Plusieurs », toucher une case la modifie ;
+    // c'est le nom (ou la coche) qui coche la ligne
     cols.map(c => {
-      const modifiable = !enSelection && !!(EDITEURS[c.k] && EDITEURS[c.k](t, o));
+      const modifiable = !!(EDITEURS[c.k] && EDITEURS[c.k](t, o));
       const td = el('td', { class: (c.classe || '') + (modifiable ? ' modifiable' : ''), title: modifiable ? 'Toucher pour modifier' : null }, c.val(t, o));
       if (modifiable) td.addEventListener('click', ev => { ev.stopPropagation(); editerCase(td, c, t, o); });
       return td;
