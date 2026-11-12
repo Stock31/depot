@@ -2671,37 +2671,59 @@ async function pageComptes(corps) {
 /**
  * Sanji, 11/11 : « un déployable pour les appareils autorisés (renommer appareil) : rien que moi j'en ai 5 ».
  * La liste des appareils autorisés (le téléphone de l'appli, chaque navigateur connecté au site) ; on peut leur donner un nom.
- * Autoriser ou retirer un appareil reste dans Supabase.
+ * Sanji, 12/11 : « je pensais plutôt à un dépliant par utilisateur » : un dossier par compte (ses téléphones et navigateurs
+ * dedans), « Sans compte » en dernier (un téléphone de l'appli en lecture seule).
+ * Autoriser ou retirer un appareil reste dans l'appli (admin).
  */
 function blocAppareils() {
-  const zone = el('div', { style: 'padding:0 12px 10px' }, el('p', { class: 'aide' }, 'Chargement…'));
+  const zone = el('div', { style: 'padding:0 0 4px' }, el('p', { class: 'aide', style: 'padding:0 12px' }, 'Chargement…'));
   let charge = false;
+  const ouverts = new Set();
   async function charger() {
     try {
       const r = await rpc('liste_appareils', moi());
       vider(zone);
-      if (!r.ok) { zone.append(el('p', { class: 'erreur' }, r.message)); return; }
+      if (!r.ok) { zone.append(el('p', { class: 'erreur', style: 'padding:0 12px' }, r.message)); return; }
       const l = r.appareils || [];
       det.querySelector('summary').textContent = `Appareils autorisés (${l.length})`;
-      l.forEach(a => {
-        const nom = a.libelle || a.modele || a.id;
-        const quoi = [a.navigateur ? `site${a.compte ? ' · compte ' + a.compte + (a.compte_actif ? '' : ' (retiré)') : ''}` : `appli${a.nom ? ' · ' + a.nom : ''}`,
-          a.libelle && a.modele ? a.modele : null,
-          a.derniere_synchro ? `vu le ${jourHeure(a.derniere_synchro)}` : null].filter(Boolean).join(' · ');
-        zone.append(el('div', { class: 'rangee', style: 'padding:8px 0;border-bottom:1px solid var(--ligne)' },
-          el('div', { class: 'etire' },
-            el('div', { style: 'font-weight:700' }, nom, a.moi ? el('span', { class: 'pastille p-OK', style: 'margin-left:8px' }, 'cet appareil') : null),
-            el('div', { class: 'aide' }, quoi),
-            el('div', { class: 'aide', style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, a.id)),
-          el('button', { class: 'petit', onclick: async () => {
-            const v = prompt('Nom de cet appareil (ex. PC du bureau, Firefox) — vide pour effacer :', a.libelle || '');
-            if (v === null) return;
-            try { const x = await rpc('renommer_appareil', { ...moi(), p_cible: a.id, p_libelle: v }); if (!x.ok) alert(x.message); await charger(); }
-            catch (e) { alert(e.message); }
-          } }, 'Renommer')));
+      // Un dossier par utilisateur (dans l'ordre alphabétique, « Sans compte » à la fin) ; dedans, l'ordre du document
+      // (cet appareil d'abord, puis le plus récemment vu)
+      const groupes = new Map();
+      l.forEach(a => { const k = a.compte || ''; if (!groupes.has(k)) groupes.set(k, []); groupes.get(k).push(a); });
+      const cles = [...groupes.keys()].sort((x, y) => (x === '') - (y === '') || x.localeCompare(y, 'fr'));
+      cles.forEach(k => {
+        const liste = groupes.get(k);
+        const retire = k && liste.some(a => !a.compte_actif);
+        const corps = el('div', { style: 'padding:0 12px 6px' });
+        // (un dossier ouvert le reste quand la liste se recharge, après un « Renommer »)
+        const d = el('details', { class: 'dossier', ontoggle: () => { if (d.open) ouverts.add(k); else ouverts.delete(k); } },
+          el('summary', {}, k || 'Sans compte (lecture seule)', retire ? el('span', { class: 'aide', style: 'font-weight:400' }, ' (compte retiré)') : null,
+            liste.some(a => a.moi) ? el('span', { class: 'pastille p-OK' }, 'toi ici') : null,
+            el('span', { class: 'compte' }, `${liste.length} appareil${liste.length > 1 ? 's' : ''}`)),
+          corps);
+        d.open = ouverts.has(k);
+        zone.append(d);
+        liste.forEach(a => ligneAppareil(corps, a));
       });
-      zone.append(el('p', { class: 'aide', style: 'margin-top:8px' }, 'Pour retirer un appareil (perdu, changé…) : dans l\'appli, par un admin, avec le code magasinier.'));
-    } catch (e) { vider(zone).append(el('p', { class: 'erreur' }, e.message)); }
+      zone.append(el('p', { class: 'aide', style: 'margin:8px 12px 6px' }, 'Pour retirer un appareil (perdu, changé…) : dans l\'appli, par un admin, avec le code magasinier.'));
+    } catch (e) { vider(zone).append(el('p', { class: 'erreur', style: 'padding:0 12px' }, e.message)); }
+  }
+  function ligneAppareil(corps, a) {
+    const nom = a.libelle || a.modele || a.id;
+    const quoi = [a.navigateur ? 'site' : 'appli',
+      a.libelle && a.modele ? a.modele : null,
+      a.derniere_synchro ? `vu le ${jourHeure(a.derniere_synchro)}` : null].filter(Boolean).join(' · ');
+    corps.append(el('div', { class: 'rangee', style: 'padding:8px 0;border-bottom:1px solid var(--ligne)' },
+      el('div', { class: 'etire' },
+        el('div', { style: 'font-weight:700' }, nom, a.moi ? el('span', { class: 'pastille p-OK', style: 'margin-left:8px' }, 'cet appareil') : null),
+        el('div', { class: 'aide' }, quoi),
+        el('div', { class: 'aide', style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, a.id)),
+      el('button', { class: 'petit', onclick: async () => {
+        const v = prompt('Nom de cet appareil (ex. PC du bureau, Firefox) — vide pour effacer :', a.libelle || '');
+        if (v === null) return;
+        try { const x = await rpc('renommer_appareil', { ...moi(), p_cible: a.id, p_libelle: v }); if (!x.ok) alert(x.message); await charger(); }
+        catch (e) { alert(e.message); }
+      } }, 'Renommer')));
   }
   const det = el('details', { class: 'dossier', style: 'margin-top:16px', ontoggle: () => { if (det.open && !charge) { charge = true; charger(); } } },
     el('summary', {}, 'Appareils autorisés'), zone);
