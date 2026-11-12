@@ -500,6 +500,7 @@ function ligneArticle(t, o, options) {
   const ligne = el('div', { class: 'article', onclick: action },
     el('div', { class: 'etire' }, el('div', { class: 'nom' }, o.nom_court || o.nom || o.ref), el('div', { class: 'ref' }, o.ref || o.id)),
     el('div', { class: 'valeur' }, el('div', {}, t === 'bobines' ? celluleBobines(o) : (valeurCourte(t, o) || '—')), pastille(s)),
+    surAjout ? null : boutonHorloge(t, o),
     surAjout ? null : boutonRoue(t, o));
   return [ligne, detail];
 }
@@ -789,6 +790,162 @@ function celluleBobines(o) {
       m.map(x => el('i', { class: seuil !== null && x < seuil ? 'basse' : null, style: `height:${Math.max(12, Math.min(100, x / neuve * 100))}%` }))) : null);
 }
 
+// ------------------------------------------------------------------ 🕐 Historique (Sanji, 12/11)
+
+/* Sanji : « oui pour le site, avec une 🕐 sur chaque item, et une autre pour tout voir ».
+ * Le document garde chaque changement des articles (table historique) : qui, quand, d'où, avant → après.
+ * 🕐 d'un article : lire_historique (ses 200 derniers changements) ; 🕐 Historique (barre du Stock) : lire_historique_stock
+ * (tout le stock, par pages de 100, filtres par type et par personne). Les mêmes phrases que le 🕘 de l'appli (Edition.kt). */
+const CASES_HISTO = { nom: 'Nom', nom_court: 'Nom court', ref: 'Référence', zone: 'Emplacement', famille: 'Famille',
+  fournisseur: 'Fournisseur', mode: 'Façon de compter', unite: 'Unité', seuil: 'Seuil', signaler: 'Alerte', note: 'Note',
+  couleur: 'Couleur', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Tuyaux' };
+const IGNOREES_HISTO = new Set(['compte', 'compte_par', 'compte_appareil', 'ordre', 'g_ordre', 'suivi', 'alerte_vue_par', 'horodatages',
+  'maj', 'maj_par', 'maj_appareil', 'maj_serveur', 'cree_le', 'stock_max']);
+const COMPTES_HISTO = ['quantite', 'niveau', 'metres', 'cartons', 'tuyaux'];
+const fmtJourLong = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+function nomCaseHisto(t, k) {
+  if (k === 'par_carton') return t === 'descentes' ? 'Tuyaux par carton' : 'Contenance';
+  if (k === 'groupe') return t === 'bobines' ? 'Largeur' : 'Diamètre';
+  return CASES_HISTO[k] || k;
+}
+function valeurHisto(k, v) {
+  if (v === null || v === undefined) return '—';
+  if (k === 'niveau') return niveauLibelle(v);
+  if (k === 'mode') return v === 'niveau' ? 'niveau' : v === 'mixte' ? 'mixte' : 'quantité';
+  if (typeof v === 'boolean') return v ? 'oui' : 'non';
+  if (typeof v === 'number') return nombreJoli(v);
+  if (Array.isArray(v)) return v.length ? v.map(x => nombreJoli(num(x))).join(' + ') : 'aucune';
+  if (typeof v === 'object') return '…';
+  return String(v);
+}
+/** Les phrases d'un changement ; null = rien de lisible (seulement des cases techniques : rangement, dates…). */
+function descriptionsHisto(t, o, h) {
+  if (h.action === 'creation') return ['Créé'];
+  if (h.action === 'suppression') return ['Mis à la corbeille'];
+  if (h.action === 'restauration') return ['Ressorti de la corbeille'];
+  const c = h.changements || {};
+  const lignes = [];
+  // Un comptage : ce qui a été compté, écrit comme dans le détail (les valeurs de ce moment-là)
+  if (h.est_comptage || h.action === 'comptage') {
+    const copie = { ...(o || {}), ...(h.valeurs || {}) };
+    Object.entries(c).forEach(([k, ch]) => { if (ch && typeof ch === 'object' && 'apres' in ch) copie[k] = ch.apres; });
+    lignes.push('Comptage : ' + (resume(t, copie) || '—'));
+  }
+  // Un mouvement (entrée, sortie, départ, retour, kit) : sa phrase, et ce qui reste
+  const mvt = c.mouvement && c.mouvement.apres && typeof c.mouvement.apres === 'object' ? c.mouvement.apres : null;
+  if (mvt) {
+    lignes.push(mouvementTexte(mvt));
+    const k = t === 'bobines' ? null : ['quantite', 'cartons', 'tuyaux'].find(x => c[x]);
+    if (k) lignes.push(`${nomCaseHisto(t, k)} : ${valeurHisto(k, c[k].avant)} → ${valeurHisto(k, c[k].apres)}`);
+  }
+  Object.entries(c).forEach(([k, ch]) => {
+    if (!ch || typeof ch !== 'object' || k === 'mouvement' || k === 'sorties' || IGNOREES_HISTO.has(k)) return;
+    if (COMPTES_HISTO.includes(k) && (mvt || lignes.length)) return;     // déjà dit par le mouvement ou le comptage
+    if (k === 'supprime') lignes.push(ch.apres === true ? 'Mis à la corbeille' : 'Ressorti de la corbeille');
+    else if (k === 'alerte_vue') lignes.push(ch.apres ? 'Coché « Vu »' : '« Vu » retiré');
+    else if (k === 'manque') lignes.push(ch.apres ? 'Il a manqué (kit ou départ)' : 'Manque réglé');
+    else lignes.push(`${nomCaseHisto(t, k)} : ${valeurHisto(k, ch.avant)} → ${valeurHisto(k, ch.apres)}`);
+  });
+  return lignes.length ? lignes : null;
+}
+function origineHisto(h) {
+  if (h.source === 'import') return 'repris de l\'ancien tableau';
+  if (h.source === 'claude') return 'via Claude';
+  if (h.source === 'sql') return 'réglage direct';
+  if (h.appareil && String(h.appareil).startsWith('WEB-')) return 'site';
+  return h.source === 'appli' ? 'appli' : (h.appareil || h.source || '');
+}
+/** Ajoute les changements à la liste, rangés par jour (le jour du dernier déjà montré est rendu, pour continuer). */
+function dessinerHisto(liste, lignes, avecArticle, jourAvant) {
+  let jourCourant = jourAvant || null;
+  let caches = 0;
+  lignes.forEach(h => {
+    const t = h.table_nom;
+    const o = avecArticle ? trouver(t, h.ligne_id) : h.article;
+    const phrases = descriptionsHisto(t, o, h);
+    if (!phrases) { caches++; return; }
+    const d = new Date(h.quand);
+    const j = fmtJourLong.format(d);
+    if (j !== jourCourant) { liste.append(el('div', { class: 'histo-jour' }, j)); jourCourant = j; }
+    liste.append(el('div', { class: 'histo' },
+      el('div', { class: 'histo-tete' }, el('b', {}, fmtHeure.format(d)), ` · ${h.par || '?'}`, el('span', { class: 'aide' }, ' · ' + origineHisto(h))),
+      avecArticle ? el('div', { class: 'histo-article' }, (o && (o.nom_court || o.nom)) || h.nom || h.ref || h.ligne_id,
+        el('span', { class: 'aide', style: 'font-weight:400' }, '  ' + (h.ref || ''))) : null,
+      el('ul', {}, phrases.map(p => el('li', {}, p)))));
+  });
+  return { jour: jourCourant, caches };
+}
+
+/** 🕐 d'un article : ses changements, du plus récent au plus ancien. */
+function boutonHorloge(t, o) {
+  return el('button', { class: 'horloge', type: 'button', title: 'Historique de l\'article', 'aria-label': 'Historique de l\'article',
+    onclick: ev => { ev.stopPropagation(); fenetreHistorique(t, o); } }, '🕐');
+}
+async function fenetreHistorique(t, o) {
+  const liste = el('div', {}, el('p', { class: 'aide' }, 'Chargement…'));
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, '🕐 ' + (o.nom_court || o.nom || o.ref)),
+    el('p', { class: 'aide' }, `${o.ref || ''} · qui a compté ou changé quoi, et quand (le plus récent en haut)`),
+    liste,
+    el('button', { class: 'second', style: 'width:100%;margin-top:12px', onclick: fermerFenetre }, 'Fermer')));
+  try {
+    const r = await rpc('lire_historique', { ...moi(), p_table: t, p_id: o.id, p_limite: 200 });
+    vider(liste);
+    if (!r.ok) { liste.append(el('p', { class: 'erreur' }, r.message)); return; }
+    const l = (r.lignes || []).map(h => ({ ...h, table_nom: t, article: o }));
+    const { caches } = dessinerHisto(liste, l, false);
+    if (!liste.childElementCount) liste.append(el('p', { class: 'aide' }, 'Rien de noté pour cet article.'));
+    if (caches) liste.append(el('p', { class: 'aide', style: 'margin-top:8px' }, `(${caches} changement${caches > 1 ? 's' : ''} de rangement non montré${caches > 1 ? 's' : ''})`));
+    if (l.length >= 200) liste.append(el('p', { class: 'aide' }, 'Seuls les 200 derniers changements sont montrés.'));
+  } catch (e) { vider(liste).append(el('p', { class: 'erreur' }, e.message)); }
+}
+
+/** 🕐 Historique (barre du Stock) : tout le stock, rangé par jour ; filtres par type et par personne ; « Voir plus ancien ». */
+function fenetreHistoriqueStock() {
+  const TYPES = [[null, 'Tout'], ['comptages', 'Comptages'], ['mouvements', 'Entrées et sorties'], ['modifications', 'Modifications']];
+  const f = { type: null, qui: null };
+  const puces = el('div', { class: 'puces' });
+  const qui = el('select', { onchange: () => { f.qui = qui.value || null; recharger(); } }, el('option', { value: '' }, 'Tout le monde'));
+  const liste = el('div');
+  const pied = el('div');
+  let suite = null, jour = null, charge = 0, tour = 0;     // tour : un filtre changé pendant un chargement l'annule
+  function dessinerPuces() {
+    vider(puces).append(...TYPES.map(([k, lib]) => el('button', { class: f.type === k ? 'actif' : '', onclick: () => { f.type = k; dessinerPuces(); recharger(); } }, lib)));
+  }
+  async function page() {
+    const ce = tour;
+    vider(pied).append(el('p', { class: 'aide' }, 'Chargement…'));
+    try {
+      const r = await rpc('lire_historique_stock', { ...moi(), p_avant: suite ? suite.quand : null, p_avant_id: suite ? suite.id : null,
+        p_limite: 100, p_qui: f.qui, p_type: f.type });
+      if (ce !== tour) return;
+      vider(pied);
+      if (!r.ok) { pied.append(el('p', { class: 'erreur' }, r.message)); return; }
+      if (Array.isArray(r.personnes) && qui.options.length === 1) r.personnes.forEach(p => qui.append(el('option', { value: p }, p)));
+      const l = r.lignes || [];
+      jour = dessinerHisto(liste, l, true, jour).jour;
+      charge += l.length;
+      if (!liste.childElementCount && l.length < 100) liste.append(el('p', { class: 'aide' }, f.type === 'mouvements'
+        ? 'Aucune entrée ni sortie notée pour l\'instant (elles arrivent avec les kits, les départs et les ± de l\'appli).' : 'Rien pour l\'instant.'));
+      if (l.length >= 100) {
+        suite = l[l.length - 1];
+        pied.append(el('button', { class: 'second', style: 'width:100%;margin-top:10px', onclick: page }, 'Voir plus ancien'));
+      } else if (charge) pied.append(el('p', { class: 'aide', style: 'margin-top:8px' }, 'C\'est tout : le document garde l\'historique depuis le 6 novembre 2026.'));
+    } catch (e) { if (ce === tour) vider(pied).append(el('p', { class: 'erreur' }, e.message)); }
+  }
+  function recharger() { tour++; suite = null; jour = null; charge = 0; vider(liste); page(); }
+  dessinerPuces();
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, '🕐 Historique du stock'),
+    el('p', { class: 'aide' }, 'Tout ce qui a été compté ou changé, par qui et quand (le plus récent en haut). Le 🕐 d\'un article montre le sien.'),
+    puces,
+    el('label', {}, 'Qui'), qui,
+    liste, pied,
+    el('button', { class: 'second', style: 'width:100%;margin-top:12px', onclick: fermerFenetre }, 'Fermer')));
+  page();
+}
+
 /** Le manque est réglé (commandé, arrivé…) : il ne s'affiche plus en rouge vif. */
 function boutonManqueRegle(t, o) {
   return el('button', {
@@ -880,8 +1037,10 @@ function pageStock(corps) {
   champ.addEventListener('input', () => { etat.recherche = champ.value; dessiner(); });
   dessinerPuces(); dessiner();
   // « + Nouvel article » (ajouter une ligne) ; en tableau, « ☰ Colonnes » (la disposition de chacun)
-  const outils = ajouterA(el('div', { class: 'rangee', style: 'margin-bottom:10px' }),
+  const outils = ajouterA(el('div', { class: 'rangee outils-stock', style: 'margin-bottom:10px' }),
     el('button', { class: 'second etire', onclick: nouvelArticle }, '+ Nouvel article'),
+    // Sanji, 12/11 : « … et une autre pour tout voir » : l'historique de tout le stock
+    el('button', { class: 'second', title: 'Historique de tout le stock', onclick: fenetreHistoriqueStock }, '🕐 Historique'),
     // Sanji : « en Excel, la roue crantée c'est pour ajouter des colonnes et autres réglages »
     el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'),
     // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
@@ -1184,7 +1343,9 @@ function ligneTableau(t, o, cols) {
     } }) : null;
   const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : '') + (choisie ? ' choisie' : ''),
       onclick: () => { if (coche) coche.click(); else basculer(); } },
-    el('td', { class: 'col1', title: o.nom || o.ref }, coche, o.nom_court || o.nom || o.ref),
+    // 🕐 au bout du nom (Sanji : « une 🕐 sur chaque item ») ; pas pendant « ☑ Plusieurs » (le nom coche la ligne)
+    el('td', { class: 'col1', title: o.nom || o.ref }, el('div', { class: 'nom-case' }, coche, el('span', {}, o.nom_court || o.nom || o.ref),
+      enSelection ? null : boutonHorloge(t, o))),
     // Sanji : « il faut pouvoir modifier les colonnes à la case » : même en « ☑ Plusieurs », toucher une case la modifie ;
     // c'est le nom (ou la coche) qui coche la ligne
     cols.map(c => {

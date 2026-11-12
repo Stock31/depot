@@ -91,6 +91,23 @@ details.dossier details.dossier { margin: 0 8px 8px 16px; border-radius: 10px; }
 /* ⚙ : modifier l'article (le site n'a pas d'appui long) */
 button.roue { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 10px; border: 1px solid var(--ligne); background: var(--carte);
   color: var(--accent); font-size: 20px; line-height: 1; cursor: pointer; }
+/* La barre du Stock (+ Nouvel article, 🕐 Historique, ⚙ Colonnes, ☑ Plusieurs) : deux par ligne sur un téléphone */
+@media (max-width: 520px) {
+  .outils-stock { display: grid; grid-template-columns: 1fr 1fr; }
+  .outils-stock > button { width: 100% !important; margin: 0 !important; }
+}
+/* 🕐 : l'historique d'un article (à côté de la ⚙ ; dans le tableau, au bout du nom) */
+button.horloge { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 10px; border: 1px solid var(--ligne); background: var(--carte);
+  font-size: 18px; line-height: 1; cursor: pointer; }
+table.tableau .nom-case { display: flex; align-items: center; gap: 6px; }
+table.tableau .nom-case > span { flex: 1; min-width: 0; }
+table.tableau button.horloge { width: 28px; height: 28px; font-size: 14px; border-radius: 8px; }
+/* Les listes d'historique : un titre par jour, un bloc par changement */
+.histo-jour { margin: 16px 0 2px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
+.histo { padding: 8px 0; border-bottom: 1px solid var(--ligne); font-size: 14px; color: var(--encre); }
+.histo-article { font-weight: 600; margin-top: 2px; }
+.histo ul { margin: 3px 0 0; padding-left: 18px; }
+.histo li { margin: 1px 0; }
 .detail { padding: 4px 14px 12px 14px; font-size: 14px; color: var(--gris); border-top: 1px dashed var(--ligne); }
 .pastille { display: inline-block; font-size: 12px; font-weight: 700; border-radius: 8px; padding: 2px 8px; border: 1px solid currentColor; }
 .p-MANQUE { color: #FFFFFF; background: #E0001B; border-color: #E0001B; }
