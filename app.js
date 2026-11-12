@@ -190,8 +190,8 @@ function texteManque(o) {
 function valeurCourte(tab, o) {
   if (tab === 'bobines') {
     const m = metres(o), s = sorties(o).length;
-    const b = m.length ? `${m.length} bob. · ${nombreJoli(m.reduce((a, x) => a + x, 0))} ml` : null;
-    return s ? `${b || '0 bob.'} · ${s} sortie${s > 1 ? 's' : ''}` : b;
+    const b = m.length ? `${m.length} bobine${m.length > 1 ? 's' : ''} · ${nombreJoli(m.reduce((a, x) => a + x, 0))} ml` : null;
+    return s ? `${b || '0 bobine'} · ${s} sortie${s > 1 ? 's' : ''}` : b;
   }
   if (tab === 'descentes') { const m = metresDescente(o); return m === null ? null : `${nombreJoli(m)} ml`; }
   const q = num(o.quantite), niv = o.niveau;
@@ -499,7 +499,7 @@ function ligneArticle(t, o, options) {
   const action = surAjout ? () => surAjout(t, o) : () => { detail.hidden = !detail.hidden; if (!detail.hidden) remplirDetail(detail, t, o); };
   const ligne = el('div', { class: 'article', onclick: action },
     el('div', { class: 'etire' }, el('div', { class: 'nom' }, o.nom_court || o.nom || o.ref), el('div', { class: 'ref' }, o.ref || o.id)),
-    el('div', { class: 'valeur' }, el('div', {}, valeurCourte(t, o) || '—'), pastille(s)),
+    el('div', { class: 'valeur' }, el('div', {}, t === 'bobines' ? celluleBobines(o) : (valeurCourte(t, o) || '—')), pastille(s)),
     surAjout ? null : boutonRoue(t, o));
   return [ligne, detail];
 }
@@ -743,13 +743,50 @@ function remplirDetail(d, t, o) {
   const s = statut(t, o);
   ajouterA(d,
     o.manque ? el('div', { class: 'manque' }, texteManque(o)) : null,
-    el('div', {}, resume(t, o) || 'Pas encore compté'),
+    // Bobines (Sanji : « le détail des bobines, je ne suis pas fan ») : une jauge par bobine, au lieu de « 65 + 15 + 10 = … »
+    t === 'bobines' && (metres(o).length || sorties(o).length) ? jaugesBobines(o) : el('div', {}, resume(t, o) || 'Pas encore compté'),
     o.compte ? el('div', {}, `Compté le ${jourHeure(o.compte)}${o.compte_par ? ' par ' + o.compte_par : ''}`) : null,
     o.mouvement ? el('div', {}, `Dernier mouvement : ${mouvementTexte(o.mouvement)}, le ${jourHeure(o.mouvement.quand)}`) : null,
-    sorties(o).length ? el('div', {}, 'Sorties : ' + sorties(o).map(x => `${nombreJoli(num(x.m))} ml (${x.ouvrier || '?'})`).join(', ')) : null,
+    t !== 'bobines' && sorties(o).length ? el('div', {}, 'Sorties : ' + sorties(o).map(x => `${nombreJoli(num(x.m))} ml (${x.ouvrier || '?'})`).join(', ')) : null,
     o.fournisseur ? el('div', {}, `Fournisseur : ${o.fournisseur}`) : null,
     o.note ? el('div', {}, `Note : ${o.note}`) : null,
     enAlerte(s) ? el('div', { class: 'rangee', style: 'margin-top:8px' }, boutonVu(t, o), o.manque ? boutonManqueRegle(t, o) : null) : null);
+}
+
+/** La longueur d'une bobine neuve de cette largeur (réglage « longueur_bobine_neuve_m » : un nombre, ou par largeur). */
+function longueurNeuve(o) {
+  const r = reglage('longueur_bobine_neuve_m');
+  if (typeof r === 'number') return r;
+  if (r && typeof r === 'object') { const v = num(r[String(parseInt(o.groupe, 10))]); if (v) return v; }
+  return Math.max(60, ...metres(o));
+}
+
+/** Chaque bobine en jauge : remplie selon ce qui reste par rapport à une neuve ; orange sous le seuil ; les sorties en gris. */
+function jaugesBobines(o) {
+  const neuve = longueurNeuve(o);
+  const seuil = num(o.seuil);
+  const m = metres(o).slice().sort((a, b) => b - a);
+  const total = m.reduce((a, x) => a + x, 0);
+  const jauge = (metresBobine, classe, etiquette) => el('div', { class: 'jauge' + (classe ? ' ' + classe : '') },
+    el('span', { class: 'barre' }, el('i', { style: `width:${Math.max(3, Math.min(100, metresBobine / neuve * 100))}%` })),
+    el('span', { class: 'm' }, `${nombreJoli(metresBobine)} ml`),
+    etiquette ? el('span', { class: 'aide' }, etiquette) : null);
+  return el('div', { class: 'jauges' },
+    el('div', { style: 'font-weight:700;color:var(--encre)' },
+      m.length ? `${m.length} bobine${m.length > 1 ? 's' : ''} au dépôt · ${nombreJoli(total)} ml en tout` : 'Aucune bobine au dépôt'),
+    el('div', { class: 'aide' }, `Une neuve fait ${nombreJoli(neuve)} ml` + (seuil !== null ? ` · alerte s'il n'en reste aucune d'au moins ${nombreJoli(seuil)} ml` : '')),
+    m.map(x => jauge(x, seuil !== null && x < seuil ? 'basse' : null, null)),
+    sorties(o).length ? el('div', { style: 'margin-top:6px;font-weight:600;color:var(--encre)' }, 'Sorties (chez un employé)') : null,
+    sorties(o).map(s => jauge(num(s.m) ?? 0, 'sortie', `${s.ouvrier || 'personne de précis'}${s.depuis ? ', depuis le ' + jour(s.depuis) : ''}`)));
+}
+
+/** La case Stock d'une bobine dans le tableau : le texte, et une petite barre par bobine (plus haute = plus longue). */
+function celluleBobines(o) {
+  const neuve = longueurNeuve(o), seuil = num(o.seuil);
+  const m = metres(o).slice().sort((a, b) => b - a);
+  return el('span', { class: 'cellule-bobines' }, valeurCourte('bobines', o) || '—',
+    m.length ? el('span', { class: 'mini-bobines', title: m.map(x => nombreJoli(x) + ' ml').join(' · ') },
+      m.map(x => el('i', { class: seuil !== null && x < seuil ? 'basse' : null, style: `height:${Math.max(12, Math.min(100, x / neuve * 100))}%` }))) : null);
 }
 
 /** Le manque est réglé (commandé, arrivé…) : il ne s'affiche plus en rouge vif. */
@@ -876,7 +913,7 @@ function quantiteTri(t, o) {
 const MODES = { quantite: 'Quantité', niveau: 'Niveau', mixte: 'Mixte' };
 const COLONNES_TOUTES = [
   { k: 'ref', titre: 'Réf.', classe: 'ref', val: (t, o) => o.ref || o.id, tri: (t, o) => o.ref || o.id },
-  { k: 'stock', titre: 'Stock', classe: 'nombre', val: (t, o) => valeurCourte(t, o) || '—', tri: quantiteTri },
+  { k: 'stock', titre: 'Stock', classe: 'nombre', val: (t, o) => t === 'bobines' ? celluleBobines(o) : (valeurCourte(t, o) || '—'), tri: quantiteTri },
   { k: 'etat', titre: 'État', val: (t, o) => pastille(statut(t, o)), tri: (t, o) => ORDRE_ETAT[statut(t, o)] ?? 9 },
   { k: 'seuil', titre: 'Seuil', val: (t, o) => seuilTexte(t, o), tri: (t, o) => num(o.seuil) },
   { k: 'fournisseur', titre: 'Fournisseur', val: (t, o) => o.fournisseur || '—', tri: (t, o) => o.fournisseur },

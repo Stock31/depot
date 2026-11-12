@@ -131,6 +131,18 @@ table.tableau td.en-cours { padding: 2px 4px; }
   background: var(--carte); color: var(--encre); }
 table.tableau td.note { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 table.tableau tr.detail-ligne td { white-space: normal; background: var(--fond); }
+/* Bobines : une jauge par bobine (détail) et une petite barre par bobine (case Stock du tableau) */
+.jauges { margin: 2px 0 8px; }
+.jauge { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.jauge .barre { flex: 1; max-width: 240px; height: 12px; background: var(--ligne); border-radius: 6px; overflow: hidden; }
+.jauge .barre i { display: block; height: 100%; background: var(--vert); border-radius: 6px; }
+.jauge.basse .barre i { background: var(--orange); }
+.jauge.sortie .barre i { background: var(--gris); }
+.jauge .m { min-width: 62px; font-weight: 700; color: var(--encre); }
+.cellule-bobines { display: inline-flex; align-items: center; gap: 8px; }
+.mini-bobines { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; }
+.mini-bobines i { display: block; width: 6px; background: var(--vert); border-radius: 2px 2px 0 0; }
+.mini-bobines i.basse { background: var(--orange); }
 /* « ☑ Plusieurs » : les coches, les lignes cochées, la barre du bas */
 input.coche-ligne { width: 18px; height: 18px; margin: 0 8px 0 0; vertical-align: middle; accent-color: var(--accent); cursor: pointer; }
 table.tableau tr.choisie td, table.tableau tr.choisie td.col1 { background: var(--vert-fond); }
