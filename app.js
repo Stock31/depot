@@ -431,7 +431,8 @@ function ecranRappel() {
 // Sanji, 11/11 : « À signaler » devient ⚠ (avec le nombre), pour gagner de la place
 // Les réglages (comptes, type d'affichage du stock, déconnexion) s'ouvrent par la roue ⚙ de l'en-tête,
 // à côté de la synchro, comme dans l'appli (Sanji, 11/11) : ce n'est plus un onglet
-const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['idees', '✎ Idées']];
+// Sanji, 12/11 : le carnet (fournisseurs et employés) « entre Kits et Idées »
+const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['carnet', 'Carnet'], ['idees', '✎ Idées']];
 
 function principal(onglet) {
   // Sanji : « quand je clique sur un nom de colonne pour trier, il me redécale tout à gauche » : on garde la place
@@ -473,7 +474,7 @@ function principalDessiner() {
           onclick: () => principal('comptes') }, '⚙︎')),
       nav),
     corps);
-  ({ stock: pageStock, signaler: pageSignaler, kits: pageKits, idees: pageIdees, comptes: pageComptes })[etat.onglet](corps);
+  ({ stock: pageStock, signaler: pageSignaler, kits: pageKits, carnet: pageCarnet, idees: pageIdees, comptes: pageComptes })[etat.onglet](corps);
 }
 
 async function rafraichir() {
@@ -2334,6 +2335,135 @@ function ouvrirArticleScanne(code) {
     d,
     el('button', { class: 'second', style: 'width:100%;margin-top:10px', onclick: () => editeurArticle(x.t, x.o) }, '⚙︎ Modifier l\'article'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Fermer')));
+}
+
+// ------------------------------------------------------------------ Carnet (fournisseurs et employés)
+
+/**
+ * Le carnet, comme dans l'appli (Carnet.kt) : pour chacun un libellé (le nom de l'entreprise, le prénom) et une note libre.
+ *  - renommer un fournisseur met ses articles à jour (s'il prend le nom d'un autre, les deux fusionnent) ;
+ *  - renommer un employé met à jour les bobines qu'il a en main et ses kits déploiement ;
+ *  - retirer un fournisseur : ses articles passent sans fournisseur (N/A).
+ */
+const TYPES_CARNET = [['fournisseur', 'Fournisseurs'], ['employe', 'Employés']];
+const lignesCarnet = type => tous('carnet').filter(c => c.type === type).sort((a, b) => triFr(String(a.libelle || ''), String(b.libelle || '')));
+const articlesDuFournisseur = nom => ARTICLES.flatMap(t => tous(t).filter(o => (o.fournisseur || '').trim() === nom).map(o => ({ t, o })));
+const bobinesEnMain = nom => tous('bobines').reduce((n, o) => n + sorties(o).filter(s => String(s.ouvrier || '').split(' + ').includes(nom)).length, 0);
+const departsDehors = nom => tous('deploiements').filter(d => d.statut === 'parti' && (d.employes || []).includes(nom)).length;
+const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? 's' : ''}`;
+
+function pageCarnet(corps) {
+  const type = lireStockage('sd_carnet_type') === 'employe' ? 'employe' : 'fournisseur';
+  corps.append(el('div', { class: 'puces sous-menu' }, TYPES_CARNET.map(([k, lib]) =>
+    el('button', { class: k === type ? 'actif' : '', onclick: () => { ecrireStockage('sd_carnet_type', k); principal('carnet'); } }, lib))));
+  corps.append(el('p', { class: 'aide' }, 'Touche une ligne pour la modifier, lui ajouter une note (un téléphone, par exemple) ou la retirer.'));
+  const lignes = lignesCarnet(type);
+  if (!lignes.length) corps.append(el('p', { class: 'aide' }, 'Rien pour l\'instant.'));
+  lignes.forEach(r => {
+    const nom = r.libelle || '?';
+    let sous = null;
+    if (type === 'fournisseur') { const n = articlesDuFournisseur(nom).length; sous = n ? pluriel(n, 'article') : 'aucun article'; }
+    else {
+      const b = bobinesEnMain(nom), d = departsDehors(nom);
+      sous = [b ? `${pluriel(b, 'bobine')} en main` : null, d ? `${pluriel(d, 'départ')} en cours` : null].filter(Boolean).join(' · ') || null;
+    }
+    corps.append(el('div', { class: 'carte', style: 'cursor:pointer;padding:10px 14px', onclick: () => fenetreCarnet(type, r) },
+      el('div', { style: 'font-weight:700' }, nom),
+      sous ? el('div', { class: 'aide' }, sous) : null,
+      r.note ? el('div', { style: 'color:var(--accent);font-size:14px;white-space:pre-wrap' }, r.note) : null));
+  });
+  if (type === 'fournisseur') {
+    // Les noms utilisés par des articles mais absents du carnet
+    const noms = lignes.map(r => String(r.libelle || '').toLowerCase());
+    const absents = new Map();
+    ARTICLES.forEach(t => tous(t).forEach(o => { const f = (o.fournisseur || '').trim(); if (f && !noms.includes(f.toLowerCase())) absents.set(f, (absents.get(f) || 0) + 1); }));
+    absents.forEach((n, f) => corps.append(el('div', { class: 'rangee', style: 'margin:8px 0' },
+      el('span', { class: 'etire', style: 'color:var(--orange)' }, `« ${f} » : ${pluriel(n, 'article')}, pas dans le carnet`),
+      el('button', { class: 'petit', onclick: async () => { try { await ecrire('carnet', 'F-' + hex(6), { type: 'fournisseur', libelle: f, note: null, supprime: false }); principal('carnet'); } catch (e) { alert(e.message); } } }, `Ajouter « ${f} »`))));
+    const sans = ARTICLES.reduce((n, t) => n + tous(t).filter(o => !(o.fournisseur || '').trim()).length, 0);
+    if (sans) corps.append(el('p', { class: 'aide' }, `${pluriel(sans, 'article')} sans fournisseur (N/A).`));
+  }
+  corps.append(el('button', { class: 'principal', onclick: () => fenetreCarnet(type, null) }, type === 'fournisseur' ? '+ Ajouter un fournisseur' : '+ Ajouter un employé'));
+}
+
+/** Créer (r null) ou modifier une ligne du carnet : libellé, note ; « Retirer ». */
+function fenetreCarnet(type, r0) {
+  const r = r0 ? (trouver('carnet', r0.id) || r0) : null;
+  const ancien = r ? (r.libelle || '') : '';
+  const nom = el('input', { type: 'text', value: ancien, placeholder: type === 'fournisseur' ? 'Nom de l\'entreprise' : 'Prénom', autocapitalize: 'words' });
+  // Sanji : pour les employés, « ne marque pas téléphone etc., juste note »
+  const note = el('textarea', { placeholder: type === 'employe' ? 'Note' : 'Note (téléphone, contact…)' }, r ? (r.note || '') : '');
+  const msg = el('p', { class: 'erreur' });
+  const enregistrer = async b => {
+    msg.textContent = '';
+    const libelle = nom.value.trim().slice(0, 60);
+    const texteNote = note.value.trim().slice(0, 500) || null;
+    if (!libelle) { msg.textContent = 'Il faut un nom.'; return; }
+    const doublon = lignesCarnet(type).find(x => String(x.libelle || '').toLowerCase() === libelle.toLowerCase() && (!r || x.id !== r.id));
+    b.disabled = true;
+    try {
+      if (!r) {
+        if (doublon) { msg.textContent = `« ${doublon.libelle} » est déjà dans le carnet.`; b.disabled = false; return; }
+        await ecrire('carnet', (type === 'fournisseur' ? 'F-' : 'E-') + hex(6), { type, libelle, note: texteNote, supprime: false });
+        fermerFenetre(); principal('carnet'); return;
+      }
+      const lot = [];
+      const champs = {};
+      if ((r.note || null) !== texteNote) champs.note = texteNote;
+      let info = null;
+      if (libelle !== ancien) {
+        if (type === 'fournisseur') {
+          // Nom déjà pris : les deux fiches fusionnent (celle-ci part à la corbeille, ses articles passent à l'autre)
+          const cible = doublon ? doublon.libelle : libelle;
+          if (doublon) champs.supprime = true; else champs.libelle = libelle;
+          const arts = articlesDuFournisseur(ancien);
+          arts.forEach(x => lot.push({ table: x.t, id: x.o.id, champs: { fournisseur: cible } }));
+          info = doublon ? `« ${ancien} » fusionné avec « ${cible} » (${pluriel(arts.length, 'article')}).` : `Renommé en « ${cible} » (${pluriel(arts.length, 'article')} mis à jour).`;
+        } else {
+          if (doublon) { msg.textContent = `« ${doublon.libelle} » est déjà dans le carnet.`; b.disabled = false; return; }
+          champs.libelle = libelle;
+          // Ses bobines en main et ses kits déploiement prennent le nouveau prénom
+          // (un binôme est noté « Paul + Jean » : on remplace le prénom dedans)
+          const dansQui = q => String(q || '').split(' + ').includes(ancien);
+          const remplacer = q => String(q).split(' + ').map(e => e === ancien ? libelle : e).join(' + ');
+          tous('bobines').filter(o => sorties(o).some(s => dansQui(s.ouvrier))).forEach(o =>
+            lot.push({ table: 'bobines', id: o.id, champs: { sorties: sorties(o).map(s => dansQui(s.ouvrier) ? { ...s, ouvrier: remplacer(s.ouvrier) } : s) } }));
+          tous('deploiements').filter(d => (d.employes || []).includes(ancien)).forEach(d =>
+            lot.push({ table: 'deploiements', id: d.id, champs: { employes: d.employes.map(e => e === ancien ? libelle : e) } }));
+          info = `Renommé en « ${libelle} ».`;
+        }
+      }
+      if (Object.keys(champs).length) lot.push({ table: 'carnet', id: r.id, champs });
+      if (lot.length) await ecrireLot(lot);
+      fermerFenetre(); principal('carnet');
+      if (info) alert(info);
+    } catch (e) { msg.textContent = e.message; b.disabled = false; }
+  };
+  const retirer = async b => {
+    const n = type === 'fournisseur' ? articlesDuFournisseur(ancien).length : bobinesEnMain(ancien);
+    const message = type === 'fournisseur' ? (n ? `Ses ${pluriel(n, 'article')} passeront sans fournisseur (N/A).` : 'Il n\'a aucun article.')
+      : (n ? `Il a encore ${pluriel(n, 'bobine')} en main : elles restent à son nom jusqu'au retour.` : 'L\'historique garde son nom.');
+    if (!confirm(`Retirer « ${ancien} » ?\n\n${message}`)) return;
+    b.disabled = true;
+    try {
+      const lot = [{ table: 'carnet', id: r.id, champs: { supprime: true } }];
+      if (type === 'fournisseur') articlesDuFournisseur(ancien).forEach(x => lot.push({ table: x.t, id: x.o.id, champs: { fournisseur: null } }));
+      await ecrireLot(lot);
+      fermerFenetre(); principal('carnet');
+    } catch (e) { msg.textContent = e.message; b.disabled = false; }
+  };
+  ouvrirFenetre(el('div', {},
+    el('h2', {}, r ? ancien : (type === 'fournisseur' ? 'Nouveau fournisseur' : 'Nouvel employé')),
+    el('label', {}, type === 'fournisseur' ? 'Nom de l\'entreprise' : 'Prénom'), nom,
+    el('label', {}, 'Note'), note,
+    r && type === 'fournisseur' ? el('p', { class: 'aide' }, 'Renommer un fournisseur met aussi ses articles à jour.') : null,
+    r && type === 'employe' ? el('p', { class: 'aide' }, 'Renommer un employé met aussi à jour les bobines qu\'il a en main et ses kits déploiement.') : null,
+    msg,
+    el('button', { class: 'principal', onclick: ev => enregistrer(ev.currentTarget) }, 'Enregistrer'),
+    r ? el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: ev => retirer(ev.currentTarget) }, 'Retirer') : null,
+    el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')),
+    { fixe: true });
+  nom.focus();
 }
 
 // ------------------------------------------------------------------ ✎ Idées (les demandes des patrons à Yannick)
