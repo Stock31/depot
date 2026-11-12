@@ -18,13 +18,16 @@ const DEBUT_HISTORIQUE = Date.parse('2026-11-06T00:00:00+01:00');   // le docume
 const PERIODES = [['7', '7 jours'], ['30', '30 jours'], ['91', '3 mois'], ['182', '6 mois'], ['365', '1 an'], ['tout', 'Tout'], ['perso', 'Dates…']];
 const PAS = [['auto', 'Auto'], ['jour', 'Jour'], ['semaine', 'Semaine'], ['mois', 'Mois']];
 const MAX_COURBES = 8;            // 8 couleurs au plus (au-delà : les 8 qui bougent le plus, le reste en total)
-const MARGE_SEUIL = 1.5;          // seuil conseillé = consommation par jour × délai de réassort × 1,5
+const MARGE_SEUIL = 1.5;          // seuil conseillé = consommation par jour × jours avant d'aller chercher × 1,5
+// Sanji, 12/11 : « pas de livraison, c'est moi qui vais chercher, donc pas de délai » : 3 jours d'office (le temps d'y
+// aller, week-end compris), au lieu des 14 jours de réassort supposés au départ ; réglable dans la page.
+const DELAI_DEFAUT = 3;
 
 /** Les réglages de l'onglet, gardés pour la session (le délai de réassort, lui, sur l'appareil). */
 function etatGraph() {
   if (!etat.graph) etat.graph = {
     periode: '30', du: '', au: '', mesures: { stock: true, sorties: true, entrees: false }, pas: 'auto', affichage: 'total',
-    filtres: {}, recherche: '', exclus: new Set(), cache: null, delai: num(lireStockage('sd_delai')) || 14,
+    filtres: {}, recherche: '', exclus: new Set(), cache: null, delai: num(lireStockage('sd_delai_chercher')) || DELAI_DEFAUT,
   };
   return etat.graph;
 }
@@ -334,8 +337,8 @@ function joursTexte(j) {
 }
 function tableauPronostics(g, items, debut, fin) {
   const delai = el('input', { type: 'number', min: '1', max: '120', value: g.delai, style: 'width:80px', onchange: () => {
-    const v = Math.max(1, Math.min(120, Math.round(num(delai.value) || 14)));
-    g.delai = v; ecrireStockage('sd_delai', String(v)); principal('graphiques');
+    const v = Math.max(1, Math.min(120, Math.round(num(delai.value) || DELAI_DEFAUT)));
+    g.delai = v; ecrireStockage('sd_delai_chercher', String(v)); principal('graphiques');
   } });
   const lignes = items.map(x => ({ x, p: pronostic(x, debut, fin, g.delai) }))
     .sort((a, b) => (a.p.tient ?? 1e9) - (b.p.tient ?? 1e9) || triFr(a.x.nom, b.x.nom)).slice(0, 150);
@@ -361,9 +364,9 @@ function tableauPronostics(g, items, debut, fin) {
     el('div', { class: 'graph-titre' }, 'Pronostics'),
     el('p', { class: 'aide', style: 'margin:0 0 8px' },
       'Sorties = ce qui a baissé entre deux comptages sur la période. « Tient encore » = le stock actuel divisé par la consommation moyenne. ',
-      `Seuil conseillé = consommation par jour × délai de réassort × ${nombreJoli(MARGE_SEUIL)} (une marge de moitié en plus). `,
+      `Seuil conseillé = consommation par jour × jours avant d'aller chercher × ${nombreJoli(MARGE_SEUIL)} (une marge de moitié en plus) : de quoi tenir jusqu'au prochain passage chez le fournisseur. `,
       'Pas de seuil conseillé pour les bobines (leur seuil compte la plus longue bobine) ni pour les niveaux.'),
-    el('label', { class: 'rangee', style: 'gap:8px;margin:0 0 8px' }, 'Délai de réassort (jours entre la commande et la livraison) :', delai),
+    el('label', { class: 'rangee', style: 'gap:8px;margin:0 0 8px' }, "Jours avant d'aller chercher (le temps d'y aller, week-end compris) :", delai),
     el('div', { class: 'graph-table-cadre' }, el('table', { class: 'graph-table' },
       el('thead', {}, el('tr', {}, ['Article', 'Stock', 'Sorties', 'Par semaine', 'Tient encore', 'Seuil', 'Seuil conseillé'].map(h => el('th', {}, h)))),
       corps)),
