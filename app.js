@@ -845,8 +845,13 @@ function pageStock(corps) {
   const outils = ajouterA(el('div', { class: 'rangee', style: 'margin-bottom:10px' }),
     el('button', { class: 'second etire', onclick: nouvelArticle }, '+ Nouvel article'),
     // Sanji : « en Excel, la roue crantée c'est pour ajouter des colonnes et autres réglages »
-    el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'));
+    el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'),
+    // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
+    affichageStock() === 'tableau' ? el('button', { class: etat.selection ? 'principal' : 'second', style: etat.selection ? 'width:auto;margin:0' : null,
+      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '✓ Fini' : '☑︎ Plusieurs') : null);
   corps.append(outils, champ, puces, liste);
+  if (etat.selection && affichageStock() === 'tableau') { corps.classList.add('avec-barre'); corps.append(barreLot()); }
+  else etat.majBarreLot = null;
 }
 
 // ------------------------------------------------------------------ Stock en tableau (façon Excel)
@@ -877,7 +882,9 @@ const COLONNES_TOUTES = [
   { k: 'compte', titre: 'Compté le', val: (t, o) => o.compte ? jour(o.compte) : '—', tri: (t, o) => o.compte },
   { k: 'zone', titre: 'Emplacement', val: (t, o) => o.zone || '—', tri: (t, o) => o.zone },
   { k: 'famille', titre: 'Famille', val: (t, o) => o.famille || '—', tri: (t, o) => o.famille },
-  { k: 'couleur', titre: 'Couleur', val: (t, o) => o.couleur || '—', tri: (t, o) => o.couleur },
+  // Bobines et descentes ont une case « couleur » ; pour un accessoire, la couleur est lue dans son nom (Sanji : « pourquoi
+  // une colonne couleur alors qu'elle est dans le nom ? » : elle sert à trier et regrouper par couleur, pour tous les articles)
+  { k: 'couleur', titre: 'Couleur', val: (t, o) => couleurDe(t, o) || '—', tri: (t, o) => couleurDe(t, o) },
   { k: 'groupe', titre: 'Largeur / Ø', val: (t, o) => o.groupe || '—', tri: (t, o) => o.groupe },
   { k: 'mode', titre: 'Façon de compter', val: (t, o) => t === 'accessoires' ? MODES[o.mode || 'quantite'] || o.mode : 'Mètres', tri: (t, o) => t === 'accessoires' ? (o.mode || 'quantite') : 'metres' },
   { k: 'unite', titre: 'Unité', val: (t, o) => t !== 'accessoires' ? 'ml' : o.mode === 'niveau' ? '—' : (o.unite || 'pièces'), tri: (t, o) => t !== 'accessoires' ? 'ml' : (o.unite || 'pièces') },
@@ -887,6 +894,20 @@ const COLONNES_TOUTES = [
 ];
 // Le stock et l'état juste après le nom : sur téléphone, c'est ce qu'on voit sans faire défiler de côté
 const COLONNES_ORIGINE = ['stock', 'etat', 'ref', 'seuil', 'fournisseur', 'compte'];
+
+/** Les couleurs connues (celles des descentes, et le réglage des accessoires gouttière), la plus longue d'abord. */
+function couleursConnues() {
+  const s = new Set(tous('descentes').map(o => o.couleur).filter(Boolean));
+  const r = reglage('couleurs_accessoires_gouttiere');
+  if (Array.isArray(r)) r.forEach(x => { if (x && x.libelle) s.add(x.libelle); });
+  return [...s].sort((a, b) => b.length - a.length);
+}
+/** La couleur d'un article : sa case pour une bobine ou une descente, lue dans le nom pour un accessoire. */
+function couleurDe(t, o) {
+  if (t !== 'accessoires') return o.couleur || null;
+  const nom = String(o.nom || '');
+  return couleursConnues().find(c => nom.endsWith(' ' + c) || nom.includes(' ' + c + ' ')) || null;
+}
 
 /** La disposition est retenue dans le document, au nom du compte : elle suit chaque patron sur tous ses appareils. */
 function cleDisposition() { return 'site_tableau_' + normaliser(etat.identifiant || 'moi').replace(/[^a-z0-9]+/g, '_'); }
@@ -1007,9 +1028,17 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
     const ouvert = toutOuvrir() || etat.ouverts.has(cle);
     const nAlerte = b.articles.filter(x => enAlerte(statut(x.t, x.o))).length;
     const nb = b.articles.length;
+    // « ☑ Plusieurs » : une coche par rayon / zone pour tout cocher (ou tout décocher) d'un coup
+    let caseGroupe = null;
+    if (etat.selection) {
+      const cles = b.articles.map(x => x.t + '|' + x.o.id);
+      const toutCoche = cles.length > 0 && cles.every(k => etat.selection.has(k));
+      caseGroupe = el('input', { type: 'checkbox', class: 'coche-ligne', checked: toutCoche, title: 'Tout cocher dans ce rayon',
+        onclick: ev => { ev.stopPropagation(); cles.forEach(k => toutCoche ? etat.selection.delete(k) : etat.selection.add(k)); redessiner(); if (etat.majBarreLot) etat.majBarreLot(); } });
+    }
     corpsT.append(el('tr', { class: 'groupe', onclick: () => { if (ouvert) etat.ouverts.delete(cle); else etat.ouverts.add(cle); redessiner(); } },
       el('td', { colspan: nCol },
-        el('span', { class: 'colle', style: `padding-left:${niveau * 18}px` }, `${ouvert ? '▾' : '▸'} ${b.z.id} · ${b.z.libelle || ''}`,
+        el('span', { class: 'colle', style: `padding-left:${niveau * 18}px` }, caseGroupe, `${ouvert ? '▾' : '▸'} ${b.z.id} · ${b.z.libelle || ''}`,
           el('span', { class: 'compte' }, `${nb} article${nb > 1 ? 's' : ''}`),
           nAlerte ? el('span', { class: 'compte alerte' }, `· ${nAlerte} à signaler`) : null))));
     if (!ouvert) return;
@@ -1104,10 +1133,22 @@ function ligneTableau(t, o, cols) {
     contenu.append(el('div', { class: 'rangee', style: 'margin-top:8px' },
       el('button', { class: 'petit', onclick: ev => { ev.stopPropagation(); editeurArticle(t, o); } }, '⚙︎ Tout modifier, ou corbeille…')));
   };
-  const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : ''), onclick: basculer },
-    el('td', { class: 'col1', title: o.nom || o.ref }, o.nom_court || o.nom || o.ref),
+  // « ☑ Plusieurs » : on coche les lignes (toucher la ligne coche ou décoche), puis on change une colonne pour toutes
+  const cleSel = t + '|' + o.id;
+  const enSelection = !!etat.selection;
+  const choisie = enSelection && etat.selection.has(cleSel);
+  const coche = enSelection ? el('input', { type: 'checkbox', class: 'coche-ligne', checked: choisie,
+    onclick: ev => ev.stopPropagation(),
+    onchange: ev => {
+      if (ev.target.checked) etat.selection.add(cleSel); else etat.selection.delete(cleSel);
+      ligne.classList.toggle('choisie', ev.target.checked);
+      if (etat.majBarreLot) etat.majBarreLot();
+    } }) : null;
+  const ligne = el('tr', { class: 'ligne-article' + (s === 'MANQUE' ? ' manque-ligne' : '') + (choisie ? ' choisie' : ''),
+      onclick: () => { if (coche) coche.click(); else basculer(); } },
+    el('td', { class: 'col1', title: o.nom || o.ref }, coche, o.nom_court || o.nom || o.ref),
     cols.map(c => {
-      const modifiable = !!(EDITEURS[c.k] && EDITEURS[c.k](t, o));
+      const modifiable = !enSelection && !!(EDITEURS[c.k] && EDITEURS[c.k](t, o));
       const td = el('td', { class: (c.classe || '') + (modifiable ? ' modifiable' : ''), title: modifiable ? 'Toucher pour modifier' : null }, c.val(t, o));
       if (modifiable) td.addEventListener('click', ev => { ev.stopPropagation(); editerCase(td, c, t, o); });
       return td;
@@ -1251,6 +1292,78 @@ function fenetreCompter(t, o) {
     } }, 'Enregistrer le comptage'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')),
     { fixe: true });
+}
+
+/**
+ * « ☑ Plusieurs » (Sanji : « changer plusieurs cases d'une colonne en une fois ») : la barre du bas. On coche des lignes
+ * (ou un rayon entier), on choisit la colonne et la valeur, « Appliquer » : une seule écriture pour tous. Les mêmes règles
+ * que case par case (la référence et le stock ne se changent pas en lot). Un article que la colonne ne concerne pas est sauté.
+ */
+const COLONNES_LOT = ['fournisseur', 'zone', 'seuil', 'unite', 'mode', 'par_carton', 'famille', 'couleur', 'groupe', 'note'];
+function barreLot() {
+  const nb = el('strong');
+  const selectionnes = () => [...etat.selection].map(k => { const i = k.indexOf('|'); const t = k.slice(0, i); return { t, o: trouver(t, k.slice(i + 1)) }; })
+    .filter(x => x.o && !x.o.supprime);
+  const choixCol = el('select', { class: 'dans-case' }, el('option', { value: '' }, '— quelle colonne ? —'),
+    COLONNES_LOT.map(k => el('option', { value: k }, (COLONNES_TOUTES.find(c => c.k === k) || {}).titre || k)));
+  const zoneValeur = el('span', { class: 'valeur-lot' });
+  const msg = el('span', { class: 'erreur', style: 'margin:0' });
+  let lireValeur = null;
+  function majEditeur() {
+    vider(zoneValeur); lireValeur = null; msg.textContent = '';
+    const k = choixCol.value;
+    if (!k) return;
+    const exemple = selectionnes().map(x => EDITEURS[k](x.t, x.o)).find(e => e && e.type !== 'fenetre');
+    if (!exemple) { zoneValeur.append(el('span', { class: 'aide' }, 'Cette colonne ne concerne pas les lignes cochées.')); return; }
+    if (exemple.type === 'liste') {
+      const s = choixListe(exemple.options.filter(([v]) => v !== AUTRE).concat(k === 'groupe' ? [[AUTRE, 'Autre…']] : []), null);
+      s.classList.add('dans-case');
+      zoneValeur.append(s);
+      lireValeur = () => {
+        if (s.value === AUTRE) { const v = String(prompt('Autre largeur ou diamètre (ex. 330 mm, Ø120)') || '').trim(); return v ? { brut: v, texte: v } : null; }
+        return { brut: s.value, texte: s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : s.value };
+      };
+    } else {
+      const i = el('input', { type: 'text', class: 'dans-case', inputmode: exemple.type === 'nombre' ? 'decimal' : null,
+        placeholder: exemple.type === 'nombre' ? 'nombre (vide = effacer)' : 'texte (vide = effacer)' });
+      zoneValeur.append(i);
+      lireValeur = () => ({ brut: i.value, texte: i.value.trim() || '(vide)' });
+    }
+  }
+  choixCol.addEventListener('change', majEditeur);
+  const maj = () => { const n = etat.selection ? etat.selection.size : 0; nb.textContent = `${n} ligne${n > 1 ? 's' : ''} cochée${n > 1 ? 's' : ''}`; };
+  etat.majBarreLot = maj;
+  maj();
+  return el('div', { class: 'barre-lot' },
+    nb, choixCol, zoneValeur,
+    el('button', { class: 'petit', style: 'background:var(--accent);color:var(--sur-accent);border-color:var(--accent)', onclick: async ev => {
+      const b = ev.currentTarget;
+      msg.textContent = '';
+      const k = choixCol.value;
+      if (!etat.selection.size) { msg.textContent = 'Coche d\'abord des lignes.'; return; }
+      if (!k || !lireValeur) { msg.textContent = 'Choisis une colonne, puis la valeur.'; return; }
+      const val = lireValeur();
+      if (!val) return;
+      const lot = [];
+      let pasConcernes = 0, deja = 0;
+      for (const x of selectionnes()) {
+        const e = EDITEURS[k](x.t, x.o);
+        if (!e || e.type === 'fenetre') { pasConcernes++; continue; }
+        let champs;
+        try { champs = e.lire(val.brut); } catch (err) { msg.textContent = `${x.o.nom_court || x.o.nom || x.o.ref} : ${err.message}`; return; }
+        if (champs) lot.push({ table: x.t, id: x.o.id, champs }); else deja++;
+      }
+      const titre = (COLONNES_TOUTES.find(c => c.k === k) || {}).titre || k;
+      if (!lot.length) { msg.textContent = `Rien à changer${deja ? ` (${deja} déjà à « ${val.texte} »)` : ''}${pasConcernes ? ` · ${pasConcernes} non concernés` : ''}.`; return; }
+      if (!confirm(`« ${titre} » → « ${val.texte} » pour ${lot.length} article${lot.length > 1 ? 's' : ''} ?` +
+        (deja ? `\n(${deja} l'ont déjà.)` : '') + (pasConcernes ? `\n(${pasConcernes} ne sont pas concernés par cette colonne.)` : ''))) return;
+      b.disabled = true;
+      try { await ecrireLot(lot); msg.textContent = ''; (etat.redessinerStock || (() => principal('stock')))(); alert(`C'est fait : ${lot.length} article${lot.length > 1 ? 's' : ''} changé${lot.length > 1 ? 's' : ''}.`); }
+      catch (e) { msg.textContent = e.message; }
+      b.disabled = false;
+    } }, 'Appliquer'),
+    el('button', { class: 'petit', onclick: () => { etat.selection.clear(); (etat.redessinerStock || (() => principal('stock')))(); maj(); } }, 'Tout décocher'),
+    msg);
 }
 
 /** Ouvre une case sur place : Entrée ou toucher ailleurs = enregistré ; Échap = annulé. */

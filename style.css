@@ -131,6 +131,14 @@ table.tableau td.en-cours { padding: 2px 4px; }
   background: var(--carte); color: var(--encre); }
 table.tableau td.note { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 table.tableau tr.detail-ligne td { white-space: normal; background: var(--fond); }
+/* « ☑ Plusieurs » : les coches, les lignes cochées, la barre du bas */
+input.coche-ligne { width: 18px; height: 18px; margin: 0 8px 0 0; vertical-align: middle; accent-color: var(--accent); cursor: pointer; }
+table.tableau tr.choisie td, table.tableau tr.choisie td.col1 { background: var(--vert-fond); }
+main.avec-barre { padding-bottom: 170px; }
+.barre-lot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  background: var(--carte); border-top: 2px solid var(--accent); box-shadow: 0 -4px 14px rgba(0,0,0,.2);
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+.barre-lot .valeur-lot { display: inline-flex; }
 /* ☰ Colonnes : une ligne par colonne possible */
 .ligne-colonne { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--ligne); }
 .ligne-colonne label.case { margin: 0; flex: 1; }
