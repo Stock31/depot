@@ -432,8 +432,9 @@ function ecranRappel() {
 // Les réglages (comptes, type d'affichage du stock, déconnexion) s'ouvrent par la roue ⚙ de l'en-tête,
 // à côté de la synchro, comme dans l'appli (Sanji, 11/11) : ce n'est plus un onglet
 // Sanji, 12/11 : le carnet (fournisseurs et employés) « entre Kits et Idées »
-// 📈 Graphiques (Sanji, 12/11 : « un nouvel onglet graphique ») : graphiques.js
-const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['graphiques', '📈'], ['kits', 'Kits'], ['carnet', 'Carnet'], ['idees', '✎ Idées']];
+// 📈 Graphiques (Sanji, 12/11 : « un nouvel onglet graphique ») : graphiques.js ; puis « le graphique entre Carnet et
+// Idées, et appelle-le Stats »
+const ONGLETS = [['stock', 'Stock'], ['signaler', '⚠'], ['kits', 'Kits'], ['carnet', 'Carnet'], ['graphiques', 'Stats'], ['idees', '✎ Idées']];
 
 function principal(onglet) {
   // Sanji : « quand je clique sur un nom de colonne pour trier, il me redécale tout à gauche » : on garde la place
