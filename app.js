@@ -1061,6 +1061,15 @@ function pageStock(corps) {
     vider(liste);
     let rien = true;
     const enTableau = affichageStock() === 'tableau';
+    // Sanji, 12/11 (l'ordre des bobines « pas dans le bon sens ») : un tri par colonne reste retenu sur l'appareil et
+    // remplace l'ordre du dépôt ; on le dit en clair, avec de quoi revenir à l'ordre du dépôt d'un geste.
+    const tri = enTableau ? triActuel() : null;
+    if (tri) {
+      const lib = tri.k === 'article' ? 'Article' : (COLONNES_TOUTES.find(c => c.k === tri.k) || {}).titre || tri.k;
+      liste.append(el('div', { class: 'rangee', style: 'margin:0 0 8px;flex-wrap:wrap' },
+        el('span', { class: 'aide etire' }, `Trié par « ${lib} » ${tri.sens === 1 ? '▲' : '▼'}, et non dans l'ordre du dépôt.`),
+        el('button', { class: 'petit', onclick: () => { ecrireStockage('sd_tri', null); dessiner(); } }, '✕ Ordre du dépôt')));
+    }
     for (const e of arbreZones()) {
       if (enTableau) {
         const tab = tableauEntrepot(e, garde, toutOuvrir, dessiner);
