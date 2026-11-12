@@ -1,0 +1,26 @@
+# Stock Dépôt : réveil quotidien du document (Sanji, 12/11/2026 : « oui »).
+# Supabase (offre gratuite) met le document en pause après une semaine sans activité : Noël et l'été sont les deux
+# moments à risque. Une fois par jour, GitHub appelle la fonction « reveil » du document, qui ne lit ni n'écrit rien.
+# La clé utilisée est la clé PUBLIQUE de l'appli (déjà visible dans app.js) : aucun secret ici.
+# On peut aussi le lancer à la main : onglet Actions du dépôt › « Réveil du document » › Run workflow.
+name: Réveil du document
+
+on:
+  schedule:
+    - cron: '17 5 * * *'   # tous les jours vers 6 h 17 à Paris l'hiver (7 h 17 l'été)
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  reveil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Appeler le document
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-delay 30 -X POST \
+            "https://phrdduaciipoxvodfzth.supabase.co/rest/v1/rpc/reveil" \
+            -H "apikey: sb_publishable_On7Xm61ra2aDalj1RiBzeg_gWJYdXAg" \
+            -H "Content-Type: application/json" \
+            -d '{}'
