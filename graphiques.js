@@ -236,25 +236,85 @@ function pageGraphiques(corps) {
     try {
       const lignes = await chargerSeries(Math.min(debut, g.cache ? g.cache.depuis : debut));
       if (ce !== tour) return;
-      vider(resultats).append(...resultatsGraph(g, candidats().filter(x => !g.exclus.has(x.cle)), lignes, debut, fin));
+      vider(resultats).append(...resultatsGraph(g, candidats().filter(x => !g.exclus.has(x.cle)), lignes, debut, fin,
+        { voirArticle, toutLeStock, tout: !g.recherche.trim() && !Object.keys(g.filtres).length && !g.exclus.size }));
     } catch (e) { if (ce === tour) vider(resultats).append(el('p', { class: 'erreur' }, e.message)); }
     resultats.classList.remove('en-cours');
   }
 
+  // Sanji, 12/11 : « les statistiques, je ne suis pas sûr de ce que tu as fait… vois si tu peux améliorer » :
+  // l'essentiel en haut sans rien régler (ce qui va manquer, ce qui part le plus) ; toucher un article montre SA courbe ;
+  // les réglages (quoi, combien) dans un dépliant.
+  function voirArticle(x) {
+    g.filtres = {}; g.exclus.clear(); g.recherche = x.o.ref || x.o.id; recherche.value = g.recherche;
+    dessinerFiltres(); dessinerChoix(); calculer();
+    resultats.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function toutLeStock() {
+    g.filtres = {}; g.exclus.clear(); g.recherche = ''; recherche.value = '';
+    dessinerFiltres(); dessinerChoix(); calculer();
+  }
+
   dessinerPeriode(); dessinerFiltres(); dessinerChoix(); dessinerMesures();
+  const reglages = el('details', { class: 'dossier graph-reglages', open: !!g.reglagesOuverts, ontoggle: () => { g.reglagesOuverts = reglages.open; } },
+    el('summary', {}, 'Choisir quoi regarder (famille, couleur, articles…) et comment'),
+    el('div', { style: 'padding:0 14px 12px' },
+      el('div', { class: 'titre-section' }, 'Quoi'), zoneFiltres, recherche, el('div', { style: 'height:8px' }), zoneChoix,
+      el('div', { class: 'titre-section' }, 'Combien'), zoneMesures));
   corps.append(
+    el('h2', { style: 'margin:4px 0 0' }, 'Stats'),
+    el('p', { class: 'aide', style: 'margin:2px 0 8px' }, 'Ce qui part, ce qui va manquer, et comment le stock bouge. Tout vient des comptages : plus on compte souvent, plus c\'est juste.'),
     el('div', { class: 'titre-section' }, 'Période'), puPeriode, dates,
-    el('div', { class: 'titre-section' }, 'Quoi'), zoneFiltres, recherche, el('div', { style: 'height:8px' }), zoneChoix,
-    el('div', { class: 'titre-section' }, 'Combien'), zoneMesures,
+    reglages,
     resultats);
   calculer();
 }
 
+/** L'essentiel, sans rien régler : ce qui va bientôt manquer, ce qui part le plus, et combien d'articles ont été comptés. */
+function essentielGraph(g, items, debut, fin, actions) {
+  const avec = items.map(x => ({ x, p: pronostic(x, debut, fin, g.delai) }));
+  const unite = x => x.unite === 'pièces' ? '' : ' ' + x.unite;
+  const ligne = (x, droite, dessous) => el('button', { class: 'graph-ligne-article', onclick: () => actions.voirArticle(x) },
+    el('span', { class: 'etire' }, el('strong', {}, x.nom), dessous ? el('span', { class: 'aide' }, ' · ' + dessous) : null),
+    el('span', { class: 'graph-ligne-valeur' }, droite));
+  const carte = (titre, explication, lignes, vide) => el('div', { class: 'graph-carte' },
+    el('div', { class: 'graph-titre' }, titre),
+    el('p', { class: 'aide', style: 'margin:0 0 6px' }, explication),
+    lignes.length ? el('div', { class: 'graph-liste-articles' }, lignes) : el('p', { class: 'aide', style: 'margin:0' }, vide));
+
+  // 1. Va bientôt manquer : le stock divisé par ce qui part chaque jour, le plus court d'abord
+  const manque = avec.filter(({ p }) => p.tient !== null && p.tient <= 21).sort((a, b) => a.p.tient - b.p.tient).slice(0, 8);
+  // 2. Ce qui part le plus : le plus de sorties sur la période (le nombre de fois), puis la part du stock qui est partie
+  const part = avec.filter(({ x }) => x.sorti > 0 && x.unite !== 'niveau')      // un niveau (0/3 à 3/3) ne se compte pas en quantité
+    .map(({ x, p }) => ({ x, p, fois: x.vars.filter(v => v[1] < 0).length, part: x.sorti / Math.max(1, x.sorti + (p.stock || 0)) }))
+    .sort((a, b) => b.fois - a.fois || b.part - a.part).slice(0, 8);
+  // 3. Les comptages de la période
+  const comptes = items.filter(x => x.o.compte && Date.parse(x.o.compte) >= debut).length;
+  const jamais = items.filter(x => !x.o.compte).length;
+
+  return [
+    el('div', { class: 'graph-essentiel' },
+      carte('Va bientôt manquer', `Au rythme de la période, le stock tient moins de 3 semaines. Touche un article pour voir sa courbe.`,
+        manque.map(({ x, p }) => ligne(x, joursTexte(p.tient), `${nombreJoli(Math.round(p.stock * 10) / 10)}${unite(x)} en stock, ~${nombreJoli(Math.round(p.parJour * 7 * 10) / 10)}${unite(x)} par semaine`)),
+        'Rien pour l\'instant (ou pas encore assez de comptages pour le dire).'),
+      carte('Ce qui part le plus', 'Les articles qui sont sortis le plus souvent sur la période.',
+        part.map(({ x, fois }) => ligne(x, `${nombreJoli(Math.round(x.sorti * 10) / 10)}${unite(x)}`, `${fois} sortie${fois > 1 ? 's' : ''}`)),
+        'Aucune sortie vue sur la période : il faut au moins deux comptages d\'un article pour voir ce qui est parti.'),
+      carte('Comptages', 'Plus il y a d\'articles comptés souvent, plus les chiffres sont justes.',
+        [el('div', { class: 'graph-ligne-article statique' }, el('span', { class: 'etire' }, 'Comptés pendant la période'), el('span', { class: 'graph-ligne-valeur' }, `${comptes} sur ${items.length}`)),
+         jamais ? el('div', { class: 'graph-ligne-article statique' }, el('span', { class: 'etire' }, 'Jamais comptés'), el('span', { class: 'graph-ligne-valeur' }, String(jamais))) : null].filter(Boolean),
+        '')),
+  ];
+}
+
 /** Les graphiques et les pronostics pour les articles choisis. */
-function resultatsGraph(g, choisis, lignes, debut, fin) {
+function resultatsGraph(g, choisis, lignes, debut, fin, actions) {
   const sorties = [];
-  if (!choisis.length) return [el('p', { class: 'aide' }, 'Aucun article choisi : coche des articles, ou change les filtres.')];
+  if (!choisis.length) return [el('p', { class: 'aide' }, 'Aucun article choisi : change les filtres, ou touche « Tout le stock ».'),
+    el('button', { class: 'second', onclick: actions.toutLeStock }, 'Tout le stock')];
   if (!g.mesures.stock && !g.mesures.sorties && !g.mesures.entrees) return [el('p', { class: 'aide' }, 'Coche au moins « Stock », « Sorties » ou « Entrées ».')];
+  // Avant le 6/11, le document ne sait rien : les graphiques commencent là (sinon la moitié de l'image serait vide)
+  debut = Math.max(debut, Math.min(DEBUT_HISTORIQUE, fin - JOUR_MS));
 
   // Les lignes d'historique de chaque article, puis sa courbe et ses variations
   const parArticle = new Map();
@@ -269,7 +329,24 @@ function resultatsGraph(g, choisis, lignes, debut, fin) {
   // Peu de recul : on le dit (les pronostics demandent quelques semaines de comptages)
   const recul = Math.floor((Date.now() - DEBUT_HISTORIQUE) / JOUR_MS);
   if (recul < 28) sorties.push(el('p', { class: 'graph-note' },
-    `Le document suit le stock depuis le 6 novembre 2026 (${recul} jours) : les courbes s'allongent à chaque comptage, et les pronostics deviennent fiables après 4 semaines environ.`));
+    `Le document suit le stock depuis le 6 novembre 2026 (${recul} jours) : les chiffres s'affinent à chaque comptage, et les pronostics deviennent fiables après 4 semaines environ.`));
+
+  // Ce qu'on regarde, et de quoi revenir à tout le stock
+  const quoiTexte = actions.tout ? `Tout le stock (${choisis.length} articles)`
+    : choisis.length === 1 ? (choisis[0].o.nom || choisis[0].o.ref) : `${choisis.length} articles choisis`;
+  sorties.push(el('div', { class: 'rangee graph-quoi' }, el('strong', { class: 'etire' }, quoiTexte),
+    actions.tout ? null : el('button', { class: 'petit', onclick: actions.toutLeStock }, '✕ Tout le stock')));
+
+  // L'essentiel : sur tout ce qui est choisi (tout le stock d'office)
+  if (choisis.length > 1) sorties.push(...essentielGraph(g, items, debut, fin, actions));
+
+  // Les courbes : pour un article, une famille, une couleur… Le total de TOUT le stock (des pièces de 300 articles
+  // différents additionnées) ne voulait rien dire : on invite à choisir.
+  if (actions.tout && choisis.length > 40) {
+    sorties.push(el('p', { class: 'aide graph-invite' }, 'Pour voir des courbes : touche un article ci-dessus, ou ouvre « Choisir quoi regarder » (une famille, une couleur, des articles…).'));
+    sorties.push(tableauPronostics(g, items, debut, fin));
+    return sorties;
+  }
 
   // Un groupe par unité (on n'additionne jamais des pièces et des mètres)
   const unites = [...new Set(items.map(x => x.unite))].sort((a, b) => (a === 'niveau') - (b === 'niveau') || a.localeCompare(b, 'fr'));

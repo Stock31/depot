@@ -240,6 +240,19 @@ img.dessin { display: block; max-width: 100%; margin-top: 8px; border-radius: 8p
 .graph-note { font-size: 13px; color: var(--gris); background: var(--carte); border: 1px solid var(--ligne); border-radius: 10px; padding: 8px 12px; margin: 10px 0; }
 .graph-carte { background: var(--carte); border: 1px solid var(--ligne); border-radius: 12px; padding: 12px 12px 8px; margin: 10px 0; }
 .graph-titre { font-weight: 700; margin: 0 0 6px; }
+/* Stats : l'essentiel en haut (Sanji, 12/11 : « vois si tu peux améliorer ») */
+.graph-reglages { margin: 4px 0 10px; }
+.graph-quoi { margin: 12px 0 2px; }
+.graph-essentiel { display: grid; grid-template-columns: 1fr; gap: 0 12px; }
+@media (min-width: 900px) { .graph-essentiel { grid-template-columns: 1fr 1fr 1fr; align-items: start; } }
+.graph-liste-articles { display: flex; flex-direction: column; }
+.graph-ligne-article { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; background: none; border: 0;
+  border-top: 1px solid var(--ligne); padding: 8px 2px; cursor: pointer; color: var(--encre); }
+.graph-ligne-article.statique { cursor: default; }
+button.graph-ligne-article:hover strong { color: var(--accent); text-decoration: underline; }
+.graph-ligne-article .etire { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.graph-ligne-valeur { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.graph-invite { background: var(--carte); border: 1px dashed var(--ligne); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
 .graph-legende { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--encre); margin: 0 0 6px; }
 .graph-legende span { display: inline-flex; align-items: center; gap: 6px; }
 .graph-legende i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
