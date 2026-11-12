@@ -223,6 +223,13 @@ img.dessin { display: block; max-width: 100%; margin-top: 8px; border-radius: 8p
   .voile { align-items: center; }
   .fenetre { border-radius: 16px; }
 }
+/* Petites fenêtres du site (confirmer, demander, prévenir) : au centre, par-dessus une fenêtre déjà ouverte */
+.voile.question { align-items: center; z-index: 40; padding: 16px; }
+.fenetre.petite { max-width: 440px; border-radius: 16px; padding: 18px 16px 16px; }
+.texte-question { white-space: pre-line; margin: 0 0 14px; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
+.fenetre.petite input[type=text] { width: 100%; margin: -4px 0 14px; }
+.boutons-question { justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.boutons-question button { width: auto; min-width: 96px; margin: 0; }
 
 /* 📈 Graphiques : une carte par graphique ; traits fins, grille discrète, seuils en pointillés, bulle au survol */
 .graph-options .rangee { gap: 14px; }

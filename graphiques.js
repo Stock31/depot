@@ -348,7 +348,7 @@ function tableauPronostics(g, items, debut, fin) {
     const val = v => v === null ? '—' : niv ? niveauLibelle((niveaux()[Math.round(v)] || [])[0]) : nombreJoli(Math.round(v * 10) / 10) + unite;
     const seuil = num(x.o.seuil);
     const bouton = p.conseille !== null && p.conseille !== seuil ? el('button', { class: 'petit', onclick: async () => {
-      if (!confirm(`Seuil d'alerte de « ${x.nom} » : ${seuil === null ? 'aucun' : nombreJoli(seuil)} → ${p.conseille}${unite} ?`)) return;
+      if (!(await confirmer(`Seuil d'alerte de « ${x.nom} » : ${seuil === null ? 'aucun' : nombreJoli(seuil)} → ${p.conseille}${unite} ?`))) return;
       try { await ecrire(x.t, x.o.id, { seuil: p.conseille }); principal('graphiques'); } catch (e) { alert(e.message); }
     } }, 'Mettre') : null;
     return el('tr', {},

@@ -51,6 +51,65 @@ function jour(iso) { return iso ? fmtJour.format(new Date(iso)) : '?'; }
 function jourHeure(iso) { return iso ? `${fmtJour.format(new Date(iso))} à ${fmtHeure.format(new Date(iso))}` : '?'; }
 function normaliser(s) { return (s || '').normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase(); }
 
+// ------------------------------------------------------------------ questions et messages, dessinés par le site
+
+/*
+ * Sanji, 12/11 : « je ne peux pas cliquer sur Déconnexion », puis « oui » pour les autres confirmations. Le navigateur
+ * intégré de l'appli Claude n'affiche pas les fenêtres du navigateur (confirm, prompt, alert) : il répond « non » ou rien
+ * tout seul. Le site dessine donc ses propres petites fenêtres, par-dessus tout (y compris une fenêtre déjà ouverte).
+ */
+function petiteFenetre(contenu, boutons, auClavier) {
+  const avant = document.activeElement;
+  const voile = el('div', { class: 'voile question', role: 'dialog', 'aria-modal': 'true' },
+    el('div', { class: 'fenetre petite' }, contenu, el('div', { class: 'rangee boutons-question' }, boutons)));
+  const fermer = () => { voile.remove(); document.removeEventListener('keydown', touche, true); if (avant && avant.focus) avant.focus(); };
+  function touche(ev) {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); auClavier('echap'); }
+    else if (ev.key === 'Enter' && !(ev.target && ev.target.tagName === 'BUTTON')) { ev.preventDefault(); ev.stopPropagation(); auClavier('entree'); }
+  }
+  document.addEventListener('keydown', touche, true);
+  document.body.append(voile);
+  return fermer;
+}
+const texteQuestion = t => el('p', { class: 'texte-question' }, String(t ?? ''));
+
+/** À la place de confirm() : « Oui » / « Annuler » ; renvoie une promesse (vrai ou faux). */
+function confirmer(texte) {
+  return new Promise(resoudre => {
+    let fermer;
+    const fin = r => { fermer(); resoudre(r); };
+    const oui = el('button', { class: 'principal', onclick: () => fin(true) }, 'Oui');
+    const non = el('button', { class: 'second', onclick: () => fin(false) }, 'Annuler');
+    fermer = petiteFenetre(texteQuestion(texte), [non, oui], k => fin(k === 'entree'));
+    oui.focus();
+  });
+}
+
+/** À la place de prompt() : une case à remplir ; renvoie le texte, ou null si on annule. */
+function demanderTexte(texte, valeur) {
+  return new Promise(resoudre => {
+    let fermer;
+    const champ = el('input', { type: 'text', value: valeur ?? '', autocomplete: 'off' });
+    const fin = r => { fermer(); resoudre(r); };
+    fermer = petiteFenetre([texteQuestion(texte), champ],
+      [el('button', { class: 'second', onclick: () => fin(null) }, 'Annuler'), el('button', { class: 'principal', onclick: () => fin(champ.value) }, 'OK')],
+      k => fin(k === 'entree' ? champ.value : null));
+    champ.focus(); champ.select();
+  });
+}
+
+/** À la place de alert() : le message reste affiché jusqu'à « OK » ; le site continue derrière. */
+function avertir(texte) {
+  return new Promise(resoudre => {
+    let fermer;
+    const ok = el('button', { class: 'principal', onclick: () => { fermer(); resoudre(); } }, 'OK');
+    fermer = petiteFenetre(texteQuestion(texte), [ok], () => { fermer(); resoudre(); });
+    ok.focus();
+  });
+}
+// Les messages déjà écrits avec alert() passent tous par là (ils ne bloquaient rien d'important après eux)
+window.alert = texte => { avertir(texte); };
+
 // ------------------------------------------------------------------ l'appareil (ce navigateur) et le document
 
 function lireStockage(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -714,7 +773,7 @@ function editeurArticle(t, o0) {
   }
 
   async function corbeille(bouton) {
-    if (!confirm(`Mettre « ${o.nom || o.ref} » à la corbeille ?\n\nIl disparaît du stock et des listes. Yannick peut l'en ressortir depuis l'appli.`)) return;
+    if (!(await confirmer(`Mettre « ${o.nom || o.ref} » à la corbeille ?\n\nIl disparaît du stock et des listes. Yannick peut l'en ressortir depuis l'appli.`))) return;
     bouton.disabled = true;
     try { await ecrire(t, o.id, { supprime: true }); fermerFenetre(); principal(etat.onglet); }
     catch (e) { msg.textContent = e.message; bouton.disabled = false; }
@@ -958,7 +1017,7 @@ function boutonManqueRegle(t, o) {
   return el('button', {
     class: 'petit', onclick: async ev => {
       ev.stopPropagation();
-      if (!confirm('Le manque est réglé ?')) return;
+      if (!(await confirmer('Le manque est réglé ?'))) return;
       try { await ecrire(t, o.id, { manque: null }); principal(etat.onglet); } catch (e) { alert(e.message); }
     },
   }, 'Manque réglé');
@@ -1480,8 +1539,8 @@ const EDITEURS = {
     if (t === 'accessoires') return caseTexte(o, 'dimension');     // accessoires : une case libre (Ø80, G300, 5x30…)
     const gs = groupesDe(t);
     if (o.groupe && !gs.includes(o.groupe)) gs.push(o.groupe);
-    return { type: 'liste', options: [...gs.map(g => [g, g]), [AUTRE, 'Autre…']], valeur: o.groupe, lire: v => {
-      const g = v === AUTRE ? String(prompt(t === 'bobines' ? 'Autre largeur (ex. 330 mm)' : 'Autre diamètre (ex. Ø120)') || '').trim() : v;
+    return { type: 'liste', options: [...gs.map(g => [g, g]), [AUTRE, 'Autre…']], valeur: o.groupe, lire: async v => {
+      const g = v === AUTRE ? String((await demanderTexte(t === 'bobines' ? 'Autre largeur (ex. 330 mm)' : 'Autre diamètre (ex. Ø120)')) || '').trim() : v;
       if (!g || g === o.groupe) return null;
       return { groupe: g, g_ordre: gOrdre(t, g), ordre: ordreSuivant(t, g) };
     } };
@@ -1583,8 +1642,8 @@ function barreLot() {
       const s = choixListe(exemple.options.filter(([v]) => v !== AUTRE).concat(k === 'groupe' ? [[AUTRE, 'Autre…']] : []), null);
       s.classList.add('dans-case');
       zoneValeur.append(s);
-      lireValeur = () => {
-        if (s.value === AUTRE) { const v = String(prompt('Autre largeur ou diamètre (ex. 330 mm, Ø120)') || '').trim(); return v ? { brut: v, texte: v } : null; }
+      lireValeur = async () => {
+        if (s.value === AUTRE) { const v = String((await demanderTexte('Autre largeur ou diamètre (ex. 330 mm, Ø120)')) || '').trim(); return v ? { brut: v, texte: v } : null; }
         return { brut: s.value, texte: s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : s.value };
       };
     } else {
@@ -1606,7 +1665,7 @@ function barreLot() {
       const k = choixCol.value;
       if (!etat.selection.size) { msg.textContent = 'Coche d\'abord des lignes.'; return; }
       if (!k || !lireValeur) { msg.textContent = 'Choisis une colonne, puis la valeur.'; return; }
-      const val = lireValeur();
+      const val = await lireValeur();
       if (!val) return;
       const lot = [];
       let pasConcernes = 0, deja = 0;
@@ -1614,13 +1673,13 @@ function barreLot() {
         const e = EDITEURS[k](x.t, x.o);
         if (!e || e.type === 'fenetre') { pasConcernes++; continue; }
         let champs;
-        try { champs = e.lire(val.brut); } catch (err) { msg.textContent = `${x.o.nom_court || x.o.nom || x.o.ref} : ${err.message}`; return; }
+        try { champs = await e.lire(val.brut); } catch (err) { msg.textContent = `${x.o.nom_court || x.o.nom || x.o.ref} : ${err.message}`; return; }
         if (champs) lot.push({ table: x.t, id: x.o.id, champs }); else deja++;
       }
       const titre = (COLONNES_TOUTES.find(c => c.k === k) || {}).titre || k;
       if (!lot.length) { msg.textContent = `Rien à changer${deja ? ` (${deja} déjà à « ${val.texte} »)` : ''}${pasConcernes ? ` · ${pasConcernes} non concernés` : ''}.`; return; }
-      if (!confirm(`« ${titre} » → « ${val.texte} » pour ${lot.length} article${lot.length > 1 ? 's' : ''} ?` +
-        (deja ? `\n(${deja} l'ont déjà.)` : '') + (pasConcernes ? `\n(${pasConcernes} ne sont pas concernés par cette colonne.)` : ''))) return;
+      if (!(await confirmer(`« ${titre} » → « ${val.texte} » pour ${lot.length} article${lot.length > 1 ? 's' : ''} ?` +
+        (deja ? `\n(${deja} l'ont déjà.)` : '') + (pasConcernes ? `\n(${pasConcernes} ne sont pas concernés par cette colonne.)` : '')))) return;
       b.disabled = true;
       try { await ecrireLot(lot); msg.textContent = ''; (etat.redessinerStock || (() => principal('stock')))(); alert(`C'est fait : ${lot.length} article${lot.length > 1 ? 's' : ''} changé${lot.length > 1 ? 's' : ''}.`); }
       catch (e) { msg.textContent = e.message; }
@@ -1651,7 +1710,7 @@ function editerCase(td, c, t, o0) {
     if (fini) return;
     fini = true;
     let champs;
-    try { champs = e.lire(champ.value); } catch (err) { alert(err.message); redessiner(); return; }
+    try { champs = await e.lire(champ.value); } catch (err) { alert(err.message); redessiner(); return; }
     if (!champs) { redessiner(); return; }
     champ.disabled = true;
     try { await ecrire(t, o.id, champs); redessiner(); if (e.apres) e.apres(champs); }
@@ -1694,7 +1753,7 @@ function pageSignaler(corps) {
   const n = elements.filter(coche).length;
   corps.append(
     el('div', { class: 'rangee' },
-      el('button', { class: 'second', onclick: async () => { try { await navigator.clipboard.writeText(texte()); alert('Copié : tu peux le coller dans un message.'); } catch (e) { prompt('Copie ce texte :', texte()); } } }, `Copier (${n})`),
+      el('button', { class: 'second', onclick: async () => { try { await navigator.clipboard.writeText(texte()); alert('Copié : tu peux le coller dans un message.'); } catch (e) { demanderTexte('Copie ce texte :', texte()); } } }, `Copier (${n})`),
       navigator.share ? el('button', { class: 'second', onclick: () => navigator.share({ title: 'Stock à signaler', text: texte() }).catch(() => {}) }, `Partager (${n})`) : null),
     el('p', { class: 'aide' }, `${elements.length} à signaler · les « Vu » (déjà vus, en orange) ne sont pas cochés d'office.`));
   if (!elements.length) { corps.append(el('div', { class: 'carte' }, 'Rien à signaler.')); return; }
@@ -1848,10 +1907,10 @@ async function basculerDep(d0) {
       if (!lignes.length) { alert('Ce départ est vide : ouvre-le pour ajouter des articles.'); return; }
       if (!(d.employes || []).length) { alert('Personne n\'est choisi : ouvre-le pour dire qui part.'); return; }
       const resume = lignes.map(l => { const o = trouver(l.t, l.id); return `• ${nombreJoli(num(l.n) ?? 1)} ${uniteLigne(l.t, o, l.u)} · ${o ? (o.nom_court || o.nom) : l.id}`; }).join('\n');
-      if (!confirm(`« ${nomDep(d)} » est prêt ? Ils partent, le stock baisse de :\n${resume}`)) return;
+      if (!(await confirmer(`« ${nomDep(d)} » est prêt ? Ils partent, le stock baisse de :\n${resume}`))) return;
       if (await partirPrevu(d)) principal('kits');
     } else if (d.statut === 'parti') {
-      if (!confirm(`« ${nomDep(d)} » n'est plus parti ? Ce qu'il avait pris revient en stock, et il repasse en « prévu ».\n(Pour un vrai retour, avec ce qui a été utilisé : ouvre-le, puis « Retour ».)`)) return;
+      if (!(await confirmer(`« ${nomDep(d)} » n'est plus parti ? Ce qu'il avait pris revient en stock, et il repasse en « prévu ».\n(Pour un vrai retour, avec ce qui a été utilisé : ouvre-le, puis « Retour ».)`))) return;
       const tout = (d.preleve || []).map(p => p.t === 'bobines' ? (p.metres || []).map(Number) : (num(p.voulu) ?? num(p.n) ?? 0));
       await appliquerRetour(d, tout, false, true);
       principal('kits');
@@ -1865,7 +1924,7 @@ async function partirPrevu(d0) {
   const d = trouver('deploiements', d0.id) || d0;
   const lignes = d.lignes || [];
   const manques = calculerManques(lignes);
-  if (manques.length && !confirm(`Il en manque :\n${manques.join('\n')}\n\nOn prend ce qu'il y a, et ces articles passent en « À signaler » rouge vif. Continuer ?`)) return false;
+  if (manques.length && !(await confirmer(`Il en manque :\n${manques.join('\n')}\n\nOn prend ce qu'il y a, et ces articles passent en « À signaler » rouge vif. Continuer ?`))) return false;
   const quand = new Date().toISOString();
   const { lot, preleve } = mouvementsDepart(d.id, (d.employes || []).join(' + '), d.motif || null, lignes, quand);
   lot.push({ table: 'deploiements', id: d.id, champs: { statut: 'parti', preleve, depart_le: quand, depart_par: etat.identifiant } });
@@ -1899,7 +1958,7 @@ function fenetreDep(d0) {
     rentre ? null : el('button', { class: 'principal', onclick: () => fenetreRetour(d) }, 'Retour : noter ce qui revient'),
     rentre ? null : el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: () => editeurDepart(d, { ajout: true }) }, '+ Ils prennent encore…'),
     rentre ? null : el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: async ev => {
-      if (!confirm('Supprimer ce départ (erreur de saisie) ? Tout ce qu\'il avait pris revient dans le stock.')) return;
+      if (!(await confirmer('Supprimer ce départ (erreur de saisie) ? Tout ce qu\'il avait pris revient dans le stock.'))) return;
       const b = ev.currentTarget; b.disabled = true;
       try {
         const tout = (d.preleve || []).map(p => p.t === 'bobines' ? (p.metres || []).map(Number) : (num(p.voulu) ?? num(p.n) ?? 0));
@@ -1946,7 +2005,7 @@ function editeurDepart(dExistant, options) {
           dessiner();
         } }, nm)),
         el('button', { onclick: async () => {
-          const nm = String(prompt('Prénom de l\'employé') || '').trim().slice(0, 40);
+          const nm = String((await demanderTexte('Prénom de l\'employé')) || '').trim().slice(0, 40);
           if (!nm) return;
           if (!employesDuCarnet().some(x => x.toLowerCase() === nm.toLowerCase())) {
             try { await ecrire('carnet', 'E-' + hex(5), { type: 'employe', libelle: nm, supprime: false }); } catch (e) { alert(e.message); }
@@ -1997,7 +2056,7 @@ function editeurDepart(dExistant, options) {
       ajout || interne ? null : el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: ev => valider(ev.currentTarget, false) },
         prevu ? 'Enregistrer les changements (toujours prévu)' : 'Enregistrer pour plus tard (prévu, le stock ne bouge pas)'),
       prevu ? el('button', { class: 'second danger', style: 'width:100%;margin-top:8px', onclick: async ev => {
-        if (!confirm('Supprimer ce départ prévu ? (Rien n\'est encore parti : le stock ne bouge pas.)')) return;
+        if (!(await confirmer('Supprimer ce départ prévu ? (Rien n\'est encore parti : le stock ne bouge pas.)'))) return;
         const b = ev.currentTarget; b.disabled = true;
         try { await ecrire('deploiements', d0.id, { supprime: true }); fermerFenetre(); principal('kits'); }
         catch (e) { msg.textContent = e.message; b.disabled = false; }
@@ -2026,7 +2085,7 @@ function editeurDepart(dExistant, options) {
     try {
       await chargerTout();                         // le stock frais, juste avant d'y toucher
       const manques = calculerManques(brouillon.lignes);
-      if (manques.length && !confirm(`Il en manque :\n${manques.join('\n')}\n\nOn prend ce qu'il y a, et ces articles passent en « À signaler » rouge vif. Continuer ?`)) {
+      if (manques.length && !(await confirmer(`Il en manque :\n${manques.join('\n')}\n\nOn prend ce qu'il y a, et ces articles passent en « À signaler » rouge vif. Continuer ?`))) {
         b.disabled = false; return;
       }
       const dAvant = ajout || prevu ? (trouver('deploiements', dExistant.id) || dExistant) : null;
@@ -2346,7 +2405,7 @@ function editeurKit(k0) {
       }, 'Enregistrer'),
       k && !pret ? el('button', {
         class: 'second danger', style: 'width:100%;margin-top:8px', onclick: async () => {
-          if (!confirm(`Supprimer le kit « ${nomKit(k)} » ?`)) return;
+          if (!(await confirmer(`Supprimer le kit « ${nomKit(k)} » ?`))) return;
           try { await ecrire('kits', k.id, { supprime: true }); fermerFenetre(); await rafraichir(); } catch (e) { msg.textContent = e.message; }
         },
       }, 'Supprimer le kit') : null,
@@ -2704,7 +2763,7 @@ function fenetreCarnet(type, r0) {
     const n = type === 'fournisseur' ? articlesDuFournisseur(ancien).length : bobinesEnMain(ancien);
     const message = type === 'fournisseur' ? (n ? `Ses ${pluriel(n, 'article')} passeront sans fournisseur (N/A).` : 'Il n\'a aucun article.')
       : (n ? `Il a encore ${pluriel(n, 'bobine')} en main : elles restent à son nom jusqu'au retour.` : 'L\'historique garde son nom.');
-    if (!confirm(`Retirer « ${ancien} » ?\n\n${message}`)) return;
+    if (!(await confirmer(`Retirer « ${ancien} » ?\n\n${message}`))) return;
     b.disabled = true;
     try {
       const lot = [{ table: 'carnet', id: r.id, champs: { supprime: true } }];
@@ -2749,7 +2808,7 @@ function carteDemande(d) {
     d.reponse ? el('div', { style: 'margin-top:8px;color:var(--accent)' }, `Réponse de Yannick : ${d.reponse}`) : null,
     d.statut === 'nouvelle' && d.demande_par === etat.identifiant ? el('div', { class: 'rangee', style: 'margin-top:8px' },
       el('button', { class: 'petit danger', onclick: async () => {
-        if (!confirm('Retirer cette demande ?')) return;
+        if (!(await confirmer('Retirer cette demande ?'))) return;
         try { await ecrire('demandes', d.id, { supprime: true }); principal('idees'); } catch (e) { alert(e.message); }
       } }, 'Retirer')) : null);
 }
@@ -2858,13 +2917,10 @@ async function pageComptes(corps) {
   // Sanji, 11/11 : les comptes et la coche admin sont réservés aux admins (« un admin minimum est obligatoire »)
   // Sanji, 12/11 : la coche Magasinier remplace le code magasinier (« un peu comme les rôles sur Discord »)
   const liste = el('div', {}, el('p', { class: 'aide' }, etat.admin ? 'Chargement…' : 'Réservé aux admins : demande à Yannick.'));
-  // Sanji, 12/11 : « je ne peux pas cliquer sur Déconnexion » : la fenêtre « Te déconnecter ? » ne s'ouvre pas dans
-  // certains navigateurs (celui de l'appli Claude), qui répondent « non » tout seuls. On confirme sur le bouton lui-même.
-  const boutonDeco = el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: () => {
-    if (boutonDeco.dataset.arme === 'oui') return seDeconnecter();
-    boutonDeco.dataset.arme = 'oui';
-    boutonDeco.textContent = 'Touche encore pour te déconnecter (il faudra retaper ton mot de passe)';
-    setTimeout(() => { boutonDeco.dataset.arme = ''; boutonDeco.textContent = 'Déconnexion'; }, 6000);
+  // Sanji, 12/11 : « je ne peux pas cliquer sur Déconnexion » : la fenêtre du navigateur ne s'ouvrait pas dans celui de
+  // l'appli Claude ; la question passe maintenant par la fenêtre du site (confirmer), comme toutes les autres.
+  const boutonDeco = el('button', { class: 'second danger', style: 'width:100%;margin-top:24px', onclick: async () => {
+    if (await confirmer('Te déconnecter de cet appareil ? Il faudra retaper ton identifiant et ton mot de passe.')) seDeconnecter();
   } }, 'Déconnexion');
   ajouterA(corps,
     etat.admin ? el('p', { class: 'aide' }, 'Les coches font les droits, comme des rôles : sans coche = lecture seule (le stock, dans l\'appli) ; ☑ Magasinier = tout voir et modifier, sur l\'appli et le site ; ☑ Admin = en plus les comptes, les coches et les appareils.') : null,
@@ -2888,7 +2944,7 @@ async function pageComptes(corps) {
         el('label', { class: 'case', style: 'margin:0', title: c.admin ? 'Compris dans Admin' : null },
           el('input', { type: 'checkbox', checked: !!(c.magasinier || c.admin), disabled: !!c.admin, onchange: async ev => {
             const voulu = ev.target.checked;
-            if (!confirm(voulu ? `« ${c.identifiant} » devient magasinier ? (tout voir et modifier, appli et site)` : `« ${c.identifiant} » passe en lecture seule ? (le stock seulement, dans l'appli)`)) { ev.target.checked = !voulu; return; }
+            if (!(await confirmer(voulu ? `« ${c.identifiant} » devient magasinier ? (tout voir et modifier, appli et site)` : `« ${c.identifiant} » passe en lecture seule ? (le stock seulement, dans l'appli)`))) { ev.target.checked = !voulu; return; }
             try { const x = await rpc('definir_magasinier', { ...moi(), p_compte: c.id, p_magasinier: voulu }); alert(x.message); }
             catch (e) { alert(e.message); }
             principal('comptes');
@@ -2897,13 +2953,13 @@ async function pageComptes(corps) {
         el('label', { class: 'case', style: 'margin:0' },
           el('input', { type: 'checkbox', checked: !!c.admin, onchange: async ev => {
             const voulu = ev.target.checked;
-            if (!confirm(voulu ? `« ${c.identifiant} » devient admin ? (comptes, coches, appareils)` : `« ${c.identifiant} » n'est plus admin ? (il reste ${c.magasinier ? 'magasinier' : 'en lecture seule, sans la coche Magasinier'})`)) { ev.target.checked = !voulu; return; }
+            if (!(await confirmer(voulu ? `« ${c.identifiant} » devient admin ? (comptes, coches, appareils)` : `« ${c.identifiant} » n'est plus admin ? (il reste ${c.magasinier ? 'magasinier' : 'en lecture seule, sans la coche Magasinier'})`))) { ev.target.checked = !voulu; return; }
             try { const x = await rpc('definir_admin', { ...moi(), p_compte: c.id, p_admin: voulu }); alert(x.message); }
             catch (e) { alert(e.message); }
             if (c.moi && !voulu) await demarrer(); else principal('comptes');
           } }), 'Admin'),
         c.moi ? null : el('button', { class: 'petit danger', onclick: async () => {
-          if (!confirm(`Retirer le compte « ${c.identifiant} » ? Il ne pourra plus se connecter.`)) return;
+          if (!(await confirmer(`Retirer le compte « ${c.identifiant} » ? Il ne pourra plus se connecter.`))) return;
           const x = await rpc('desactiver_compte', { ...moi(), p_compte: c.id }); alert(x.message); principal('comptes');
         } }, 'Retirer')))));
   } catch (e) { vider(liste).append(el('p', { class: 'erreur' }, e.message)); }
@@ -2942,12 +2998,12 @@ function blocAppareils() {
             el('div', { class: 'aide' }, a.derniere_synchro ? `connecté le ${jourHeure(a.derniere_synchro)}` : ''),
             el('div', { class: 'aide', style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, a.id)),
           etat.admin ? el('button', { class: 'petit', onclick: async () => {
-            if (!confirm(`Autoriser ce navigateur pour « ${a.compte} » (${a.id}) ?`)) return;
+            if (!(await confirmer(`Autoriser ce navigateur pour « ${a.compte} » (${a.id}) ?`))) return;
             try { const x = await rpc('valider_appareil', { ...moi(), p_cible: a.id }); if (!x.ok) alert(x.message); await charger(); }
             catch (e) { alert(e.message); }
           } }, 'Autoriser') : null,
           etat.admin ? el('button', { class: 'petit danger', onclick: async () => {
-            if (!confirm(`Refuser ce navigateur (${a.id}) ? Il ne verra rien.`)) return;
+            if (!(await confirmer(`Refuser ce navigateur (${a.id}) ? Il ne verra rien.`))) return;
             try { const x = await rpc('retirer_appareil', { ...moi(), p_code: '', p_cible: a.id }); if (!x.ok) alert(x.message); await charger(); }
             catch (e) { alert(e.message); }
           } }, 'Refuser') : null)));
@@ -2988,14 +3044,14 @@ function blocAppareils() {
         el('div', { class: 'aide' }, quoi),
         el('div', { class: 'aide', style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, a.id)),
       el('button', { class: 'petit', onclick: async () => {
-        const v = prompt('Nom de cet appareil (ex. PC du bureau, Firefox) — vide pour effacer :', a.libelle || '');
+        const v = await demanderTexte('Nom de cet appareil (ex. PC du bureau, Firefox) — vide pour effacer :', a.libelle || '');
         if (v === null) return;
         try { const x = await rpc('renommer_appareil', { ...moi(), p_cible: a.id, p_libelle: v }); if (!x.ok) alert(x.message); await charger(); }
         catch (e) { alert(e.message); }
       } }, 'Renommer'),
       etat.admin ? el('button', { class: 'petit danger', onclick: async () => {
-        if (!confirm(a.moi ? 'C\'est CET appareil : tu seras déconnecté ici, et un admin devra de nouveau l\'autoriser. Retirer quand même ?'
-                           : `Retirer « ${nom} » (${a.id}) ? Il ne verra plus rien jusqu'à ce qu'on s'y reconnecte.`)) return;
+        if (!(await confirmer(a.moi ? 'C\'est CET appareil : tu seras déconnecté ici, et un admin devra de nouveau l\'autoriser. Retirer quand même ?'
+                           : `Retirer « ${nom} » (${a.id}) ? Il ne verra plus rien jusqu'à ce qu'on s'y reconnecte.`))) return;
         try {
           const x = await rpc('retirer_appareil', { ...moi(), p_code: '', p_cible: a.id });
           if (!x.ok) { alert(x.message); return; }
