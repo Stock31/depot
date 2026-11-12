@@ -577,11 +577,14 @@ function editeurArticle(t, o0) {
   const nomCourt = champ(o.nom_court, 'court, pour l\'étiquette (26 caractères conseillés)');
   const ref = champ(o.ref, 'ex. FON-G300-BLA', { autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false' });
 
-  // Bobines et descentes : couleur, largeur ou diamètre (« Autre… » ouvre un champ libre)
-  let couleur = null, groupe = null, groupeAutre = null;
+  // Couleur (tous) ; bobines et descentes : largeur ou diamètre (« Autre… » ouvre un champ libre) ; accessoires : dimension libre
+  let groupe = null, groupeAutre = null, dimension = null;
+  const listeCouleurs = el('datalist', { id: 'couleurs-connues' },
+    [...new Set(ARTICLES.flatMap(x => tous(x).map(a => a.couleur)).filter(Boolean))].sort(triFr).map(c => el('option', { value: c })));
+  const couleur = champ(o.couleur ?? (t === 'accessoires' ? couleurDe(t, o) : null), 'ex. Anthracite 7016', { list: 'couleurs-connues', autocomplete: 'off' });
   const titreGroupe = t === 'bobines' ? 'Largeur' : 'Diamètre';
-  if (t !== 'accessoires') {
-    couleur = champ(o.couleur, 'ex. Anthracite 7016');
+  if (t === 'accessoires') dimension = champ(o.dimension, 'ex. Ø80, G300, 33, 5x30 (facultatif)');
+  else {
     const gs = groupesDe(t);
     if (o.groupe && !gs.includes(o.groupe)) gs.push(o.groupe);
     groupe = choixListe([[null, '— choisir —'], ...gs.map(g => [g, g]), [AUTRE, 'Autre…']], o.groupe);
@@ -666,12 +669,13 @@ function editeurArticle(t, o0) {
 
     const valeurs = { nom: n, nom_court: net(nomCourt.value), ref: r, zone: zone.value, fournisseur: fournisseur.value || null,
       signaler: signaler.checked, note: net(note.value) };
+    valeurs.couleur = net(couleur.value);
     if (t === 'accessoires') {
+      valeurs.dimension = net(dimension.value);
       valeurs.famille = famille.value || null;
       valeurs.mode = mode;
       if (mode !== 'niveau') { valeurs.unite = unite.value || null; valeurs.par_carton = pc; valeurs.seuil = s; }   // en niveau, on n'y touche pas
     } else {
-      valeurs.couleur = net(couleur.value);
       valeurs.groupe = g;
       valeurs.seuil = s;
       if (t === 'descentes') valeurs.par_carton = pc;
@@ -721,8 +725,9 @@ function editeurArticle(t, o0) {
     el('label', {}, 'Référence = code-barres'), ref,
     el('p', { class: 'aide' }, neuf ? 'Majuscules et tirets, la couleur à la fin. Elle ne doit pas déjà exister.'
       : 'La changer change le code-barres : il faudra réimprimer l\'étiquette.'),
-    couleur ? [el('label', {}, 'Couleur'), couleur] : null,
+    el('label', {}, 'Couleur'), couleur, listeCouleurs,
     groupe ? [el('label', {}, titreGroupe), groupe, groupeAutre] : null,
+    dimension ? [el('label', {}, 'Dimension'), dimension] : null,
     el('label', {}, 'Emplacement'), zone,
     famille ? [el('label', {}, 'Famille'), famille, el('p', { class: 'aide' }, 'Sert au rangement à l\'écran (pattes par couleur, accessoires gouttière par couleur…).')] : null,
     el('label', {}, 'Fournisseur'), fournisseur,
@@ -971,6 +976,21 @@ function boutonVu(t, o) {
   }, vu ? '✓ Vu (enlever)' : '☐ Marquer « Vu »');
 }
 
+/** Les filtres du Stock : clé, titre, et les valeurs d'un article (une couleur « A / B » compte pour les deux teintes). */
+const FILTRES_STOCK = [
+  ['famille', 'Famille', (t, o) => [t === 'accessoires' ? o.famille : t === 'bobines' ? 'Bobines' : 'Descentes']],
+  ['teinte', 'Couleur', (t, o) => teintesDe(t, o)],
+  ['dimension', 'Dimension', (t, o) => [dimensionDe(t, o)]],
+  ['fournisseur', 'Fournisseur', (t, o) => [o.fournisseur]],
+  ['zone', 'Emplacement', (t, o) => [o.zone]],
+];
+
+function libelleFiltre(k, v) {
+  if (k !== 'zone') return v;
+  const z = tous('zones').find(x => x.id === v);
+  return z && z.libelle ? `${v} · ${z.libelle}` : v;
+}
+
 function pageStock(corps) {
   const champ = el('input', { type: 'search', placeholder: 'Chercher un article, une réf, une couleur', value: etat.recherche });
   const puces = el('div', { class: 'puces' });
@@ -980,16 +1000,38 @@ function pageStock(corps) {
   function dessinerPuces() {
     vider(puces).append(...filtres.map(([k, lib, n]) => el('button', { class: k === etat.filtre ? 'actif' : '', onclick: () => { etat.filtre = k; dessinerPuces(); dessiner(); } }, `${lib}  ${n}`)));
   }
+  // Plus de filtres (Sanji, 12/11 : « plus de filtres ») : famille, couleur, dimension, fournisseur, emplacement.
+  // Chaque liste ne propose que ce qui existe avec les autres filtres déjà choisis (Coudes → Ø80, Ø100).
+  etat.filtres = etat.filtres || {};
+  const filtresZone = el('div', { class: 'filtres' });
+  const passeAutres = (x, sauf) => FILTRES_STOCK.every(([k, , f]) => k === sauf || !etat.filtres[k] || f(x.t, x.o).includes(etat.filtres[k]));
+  function dessinerFiltres() {
+    vider(filtresZone);
+    FILTRES_STOCK.forEach(([k, lib, f]) => {
+      const compte = new Map();
+      tousArticles.filter(x => passeAutres(x, k)).forEach(x => f(x.t, x.o).filter(Boolean).forEach(v => compte.set(v, (compte.get(v) || 0) + 1)));
+      if (etat.filtres[k] && !compte.has(etat.filtres[k])) compte.set(etat.filtres[k], 0);
+      const valeurs = [...compte.keys()].sort((a, b) => String(a).localeCompare(String(b), 'fr', { numeric: true }));
+      const s = el('select', { class: etat.filtres[k] ? 'actif' : '', 'aria-label': lib, onchange: () => {
+        if (s.value) etat.filtres[k] = s.value; else delete etat.filtres[k];
+        dessinerFiltres(); dessiner();
+      } }, el('option', { value: '' }, `${lib} : tout`), valeurs.map(v => el('option', { value: v }, `${lib} : ${libelleFiltre(k, v)} (${compte.get(v)})`)));
+      s.value = etat.filtres[k] || '';
+      filtresZone.append(s);
+    });
+    if (Object.keys(etat.filtres).length) filtresZone.append(el('button', { class: 'petit', onclick: () => { etat.filtres = {}; dessinerFiltres(); dessiner(); } }, '✕ Effacer les filtres'));
+  }
   function garde(t, o) {
     const s = statut(t, o);
     if (etat.filtre === 'signaler' && !enAlerte(s)) return false;
     if (etat.filtre === 'compter' && s !== 'COMPTER') return false;
+    if (!passeAutres({ t, o }, null)) return false;
     const mots = normaliser(etat.recherche).split(/\s+/).filter(Boolean);
     if (!mots.length) return true;
-    const h = normaliser([o.ref, o.nom, o.nom_court, o.zone, o.fournisseur, o.famille, o.couleur].join(' '));
+    const h = normaliser([o.ref, o.nom, o.nom_court, o.zone, o.fournisseur, o.famille, couleurDe(t, o), dimensionDe(t, o)].join(' '));
     return mots.every(m => h.includes(m));
   }
-  const toutOuvrir = () => etat.filtre !== 'tous' || etat.recherche.trim() !== '';
+  const toutOuvrir = () => etat.filtre !== 'tous' || etat.recherche.trim() !== '' || Object.keys(etat.filtres).length > 0;
   function dossierZone(n, parent) {
     const z = n.zone;
     let articles = [];
@@ -1035,7 +1077,7 @@ function pageStock(corps) {
     if (rien) liste.append(el('p', { class: 'aide' }, tousArticles.length ? 'Aucun article ne correspond.' : 'Rien à afficher : touche ⟳.'));
   }
   champ.addEventListener('input', () => { etat.recherche = champ.value; dessiner(); });
-  dessinerPuces(); dessiner();
+  dessinerPuces(); dessinerFiltres(); dessiner();
   // « + Nouvel article » (ajouter une ligne) ; en tableau, « ☰ Colonnes » (la disposition de chacun)
   const outils = ajouterA(el('div', { class: 'rangee outils-stock', style: 'margin-bottom:10px' }),
     el('button', { class: 'second etire', onclick: nouvelArticle }, '+ Nouvel article'),
@@ -1046,7 +1088,7 @@ function pageStock(corps) {
     // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
     affichageStock() === 'tableau' ? el('button', { class: etat.selection ? 'principal' : 'second', style: etat.selection ? 'width:auto;margin:0' : null,
       onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '✓ Fini' : '☑︎ Plusieurs') : null);
-  corps.append(outils, champ, puces, liste);
+  corps.append(outils, champ, puces, filtresZone, liste);
   if (etat.selection && affichageStock() === 'tableau') { corps.classList.add('avec-barre'); corps.append(barreLot()); }
   else etat.majBarreLot = null;
 }
@@ -1082,7 +1124,7 @@ const COLONNES_TOUTES = [
   // Bobines et descentes ont une case « couleur » ; pour un accessoire, la couleur est lue dans son nom (Sanji : « pourquoi
   // une colonne couleur alors qu'elle est dans le nom ? » : elle sert à trier et regrouper par couleur, pour tous les articles)
   { k: 'couleur', titre: 'Couleur', val: (t, o) => couleurDe(t, o) || '—', tri: (t, o) => couleurDe(t, o) },
-  { k: 'groupe', titre: 'Largeur / Ø', val: (t, o) => o.groupe || '—', tri: (t, o) => o.groupe },
+  { k: 'groupe', titre: 'Dimension', val: (t, o) => dimensionDe(t, o) || '—', tri: (t, o) => dimensionDe(t, o) },
   { k: 'mode', titre: 'Façon de compter', val: (t, o) => t === 'accessoires' ? MODES[o.mode || 'quantite'] || o.mode : 'Mètres', tri: (t, o) => t === 'accessoires' ? (o.mode || 'quantite') : 'metres' },
   { k: 'unite', titre: 'Unité', val: (t, o) => t !== 'accessoires' ? 'ml' : o.mode === 'niveau' ? '—' : (o.unite || 'pièces'), tri: (t, o) => t !== 'accessoires' ? 'ml' : (o.unite || 'pièces') },
   { k: 'par_carton', titre: 'Contenance', val: (t, o) => num(o.par_carton) === null ? '—' : nombreJoli(num(o.par_carton)), tri: (t, o) => num(o.par_carton) },
@@ -1099,11 +1141,21 @@ function couleursConnues() {
   if (Array.isArray(r)) r.forEach(x => { if (x && x.libelle) s.add(x.libelle); });
   return [...s].sort((a, b) => b.length - a.length);
 }
-/** La couleur d'un article : sa case pour une bobine ou une descente, lue dans le nom pour un accessoire. */
+/** La couleur d'un article : sa case (remplie pour les accessoires aussi depuis le 12/11) ; à défaut, lue dans le nom. */
 function couleurDe(t, o) {
-  if (t !== 'accessoires') return o.couleur || null;
+  if (o.couleur || t !== 'accessoires') return o.couleur || null;
   const nom = String(o.nom || '');
   return couleursConnues().find(c => nom.endsWith(' ' + c) || nom.includes(' ' + c + ' ')) || null;
+}
+/** La dimension : largeur d'une bobine, diamètre d'une descente (« groupe ») ; pour un accessoire, sa case « dimension »
+ *  (Ø80, G300, 33, 5x30, grandes… remplie depuis les noms le 12/11). */
+function dimensionDe(t, o) { return (t === 'accessoires' ? o.dimension : o.groupe) || null; }
+/** Les teintes d'une couleur, pour le filtre : « Anthracite 7016 / Noir 9005 » → Anthracite, Noir ; « Zink Tornado » → Tornado. */
+function teintesDe(t, o) {
+  const c = couleurDe(t, o);
+  if (!c) return [];
+  return c.split('/').map(x => x.replace(/\(?\bsolo\b\)?|,/gi, '').replace(/\bzink\b/gi, '').replace(/\d+/g, '').trim())
+    .filter(Boolean).map(x => x.charAt(0).toUpperCase() + x.slice(1));
 }
 
 /** La disposition est retenue dans le document, au nom du compte : elle suit chaque patron sur tous ses appareils. */
@@ -1412,9 +1464,9 @@ const EDITEURS = {
   fournisseur: (t, o) => ({ type: 'liste', options: optionsFournisseurs(o), valeur: o.fournisseur, lire: v => champListe(o, 'fournisseur', v) }),
   zone: (t, o) => ({ type: 'liste', options: optionsZones(o), valeur: o.zone, lire: v => { if (!v) throw new Error('Choisis un emplacement.'); return champListe(o, 'zone', v); } }),
   famille: (t, o) => t !== 'accessoires' ? null : { type: 'liste', options: optionsFamilles(o), valeur: o.famille, lire: v => champListe(o, 'famille', v) },
-  couleur: (t, o) => t === 'accessoires' ? null : caseTexte(o, 'couleur'),
+  couleur: (t, o) => caseTexte(o, 'couleur'),
   groupe: (t, o) => {
-    if (t === 'accessoires') return null;
+    if (t === 'accessoires') return caseTexte(o, 'dimension');     // accessoires : une case libre (Ø80, G300, 5x30…)
     const gs = groupesDe(t);
     if (o.groupe && !gs.includes(o.groupe)) gs.push(o.groupe);
     return { type: 'liste', options: [...gs.map(g => [g, g]), [AUTRE, 'Autre…']], valeur: o.groupe, lire: v => {

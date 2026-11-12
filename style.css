@@ -91,6 +91,11 @@ details.dossier details.dossier { margin: 0 8px 8px 16px; border-radius: 10px; }
 /* ⚙ : modifier l'article (le site n'a pas d'appui long) */
 button.roue { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 10px; border: 1px solid var(--ligne); background: var(--carte);
   color: var(--accent); font-size: 20px; line-height: 1; cursor: pointer; }
+/* Les filtres du Stock (famille, couleur, dimension, fournisseur, emplacement) : un choisi est en couleur */
+.filtres { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: -2px 0 10px; }
+.filtres select { width: 100%; margin: 0; padding: 7px 8px; font-size: 14px; border-radius: 10px; }
+.filtres select.actif { border: 2px solid var(--accent); color: var(--accent); font-weight: 700; }
+.filtres button.petit { margin: 0; }
 /* La barre du Stock (+ Nouvel article, 🕐 Historique, ⚙ Colonnes, ☑ Plusieurs) : deux par ligne sur un téléphone */
 @media (max-width: 520px) {
   .outils-stock { display: grid; grid-template-columns: 1fr 1fr; }
