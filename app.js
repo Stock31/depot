@@ -4,7 +4,8 @@
  * Ce fichier ne contient aucune donnée ni aucun secret : il parle directement au document (Supabase), comme l'appli.
  * La clé ci-dessous est la clé PUBLIQUE de l'appli (faite pour être visible) ; elle ne permet rien sans compte :
  *  1. le navigateur se connecte à un compte (identifiant + mot de passe, créés depuis l'appli, provisoire à changer) ;
- *  2. la première fois sur cet appareil, on tape le code magasinier (comme sur un téléphone) ;
+ *  2. la première fois sur ce navigateur, un admin l'autorise (Réglages › Appareils autorisés) ; plus de code magasinier
+ *     depuis le 12/11 : ce sont les coches du compte (Magasinier, Admin) qui décident, comme des rôles Discord ;
  *  3. l'appareil est retenu (jeton secret gardé dans ce navigateur) jusqu'à « Se déconnecter ».
  * Tout ce qui est écrit est signé du nom du compte, par la base elle-même.
  */
@@ -340,28 +341,25 @@ function ecranChangement(obligatoire) {
   ancien.focus();
 }
 
-function ecranCode() {
-  const code = el('input', { type: 'password', inputmode: 'numeric', autocomplete: 'off', id: 'code' });
-  const msg = el('p', { class: 'erreur' });
-  const bouton = el('button', { class: 'principal', type: 'submit' }, 'Autoriser cet appareil');
-  const form = el('form', {
-    onsubmit: async ev => {
-      ev.preventDefault();
-      bouton.disabled = true; msg.textContent = '';
-      try {
-        const r = await rpc('autoriser_appareil', { p_id: APP.id, p_code: code.value, p_jeton: APP.jeton });
-        if (!r.autorise) { msg.textContent = r.message; bouton.disabled = false; return; }
-        await demarrer();
-      } catch (e) { msg.textContent = e.message; bouton.disabled = false; }
-    },
-  }, el('label', { for: 'code' }, 'Code magasinier'), code, msg, bouton);
+/**
+ * Sanji, 12/11 : plus de code magasinier. Un nouveau navigateur attend qu'un admin l'autorise (« téléphone seulement »
+ * pour l'accès immédiat) ; un compte sans la coche Magasinier n'a pas accès au site (la lecture seule, c'est l'appli).
+ */
+function ecranPasEncore(titre, texte) {
   vider(app).append(el('div', { class: 'connexion carte' },
-    el('h1', {}, 'Nouvel appareil'),
-    el('p', { class: 'aide' }, `Bonjour ${etat.identifiant || ''} ! C'est la première fois sur cet appareil : tape le code magasinier (une seule fois).`),
-    form,
+    el('h1', {}, titre),
+    el('p', {}, `Bonjour ${etat.identifiant || ''} !`),
+    el('p', { class: 'aide' }, texte),
+    el('p', { class: 'aide' }, 'Code de ce navigateur : ', el('strong', { style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, APP.id)),
+    el('button', { class: 'principal', onclick: demarrer }, 'Vérifier à nouveau'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: seDeconnecter }, 'Se déconnecter')));
-  code.focus();
 }
+const ecranAttenteAdmin = () => ecranPasEncore('Nouveau navigateur',
+  'C\'est la première fois sur ce navigateur : un admin doit l\'autoriser (⚙ Réglages › Appareils autorisés, sur le site ou dans l\'appli). ' +
+  'Une fois fait, touche « Vérifier à nouveau ».');
+const ecranSansCoche = () => ecranPasEncore('Lecture seule',
+  'Ton compte n\'a pas la coche « Magasinier » : le site est réservé aux magasiniers et aux admins. ' +
+  'Le stock se consulte dans l\'appli. Pour modifier, demande la coche à un admin.');
 
 async function seDeconnecter() {
   try { await rpc('deconnecter', moi()); } catch (e) { /* on se déconnecte quand même ici */ }
@@ -375,9 +373,11 @@ async function demarrer() {
     const e = await rpc('etat_navigateur', moi());
     if (!e.connecte) return ecranConnexion();
     etat.identifiant = e.identifiant;
-    etat.admin = !!e.admin;          // la coche admin : comptes, coches admin (réservés aux admins)
+    etat.admin = !!e.admin;          // la coche admin : comptes, coches, appareils (réservés aux admins)
+    etat.magasinier = !!e.magasinier;
     if (e.a_changer) return ecranChangement(true);
-    if (!e.autorise) return ecranCode();
+    if (!e.autorise) return ecranAttenteAdmin();
+    if (!e.role) return ecranSansCoche();
     // Rappel du mot de passe (Sanji : « une question à la première connexion, pour ne pas l'oublier ; s'ils ne veulent pas, ils refusent »)
     const rappel = lireStockage('sd_rappel');
     if (!rappel) return ecranQuestionRappel();
@@ -2842,13 +2842,15 @@ async function pageComptes(corps) {
     choixAffichage,
     el('p', { class: 'aide' }, 'Tableau : une ligne par article, en colonnes ; les zones se plient et se déplient. Dossiers : des cartes par zone. Le choix est retenu sur cet appareil.'),
     el('div', { class: 'titre-section' }, 'Mon compte'),
-    el('p', {}, el('strong', {}, etat.identifiant || '?'), etat.admin ? ' · admin' : ' · magasinier'),
+    el('p', {}, el('strong', {}, etat.identifiant || '?'), etat.admin ? ' · admin' : etat.magasinier ? ' · magasinier' : ' · lecture seule'),
     el('button', { class: 'second', style: 'width:100%;margin-top:4px', onclick: () => ecranChangement(false) }, 'Changer mon mot de passe ou mon identifiant'),
     el('div', { class: 'titre-section' }, 'Comptes (site et appli)'));
   // Sanji, 11/11 : les comptes et la coche admin sont réservés aux admins (« un admin minimum est obligatoire »)
+  // Sanji, 12/11 : la coche Magasinier remplace le code magasinier (« un peu comme les rôles sur Discord »)
   const liste = el('div', {}, el('p', { class: 'aide' }, etat.admin ? 'Chargement…' : 'Réservé aux admins : demande à Yannick.'));
   ajouterA(corps,
-    etat.admin ? el('p', { class: 'aide' }, 'Pour un oubli : donne un mot de passe provisoire (à dire à l\'oral) ; la personne choisira le sien en se connectant. Personne ne peut lire un mot de passe. Un admin peut aussi changer le code magasinier et retirer un appareil (dans l\'appli).') : null,
+    etat.admin ? el('p', { class: 'aide' }, 'Les coches font les droits, comme des rôles : sans coche = lecture seule (le stock, dans l\'appli) ; ☑ Magasinier = tout voir et modifier, sur l\'appli et le site ; ☑ Admin = en plus les comptes, les coches et les appareils.') : null,
+    etat.admin ? el('p', { class: 'aide' }, 'Pour un oubli : donne un mot de passe provisoire (à dire à l\'oral) ; la personne choisira le sien en se connectant. Personne ne peut lire un mot de passe.') : null,
     liste,
     etat.admin ? el('button', { class: 'principal', onclick: () => fenetreCompte(null) }, '+ Nouveau compte') : null,
     blocAppareils(),
@@ -2862,15 +2864,24 @@ async function pageComptes(corps) {
     vider(liste);
     if (!r.ok) { liste.append(el('p', { class: 'erreur' }, r.message)); return; }
     (r.comptes || []).forEach(c => liste.append(el('div', { class: 'carte' },
-      el('div', { style: 'font-weight:700' }, c.identifiant + (c.admin ? ' · admin' : '') + (c.moi ? ' (moi)' : '')),
+      el('div', { style: 'font-weight:700' }, c.identifiant + (c.admin ? ' · admin' : c.magasinier ? ' · magasinier' : ' · lecture seule') + (c.moi ? ' (moi)' : '')),
       el('div', { class: 'aide' }, [c.a_changer ? 'doit encore choisir son mot de passe' : 'mot de passe choisi', c.appareils ? `connecté sur ${c.appareils} appareil(s)` : null, c.cree_par ? `créé par ${c.cree_par}` : null].filter(Boolean).join(' · ')),
-      el('div', { class: 'rangee', style: 'margin-top:8px' },
+      el('div', { class: 'rangee', style: 'margin-top:8px;flex-wrap:wrap' },
         c.moi ? null : el('button', { class: 'petit', onclick: () => fenetreCompte(c) }, 'Mot de passe provisoire'),
+        // La coche Magasinier : un admin la donne ou la retire (Admin la comprend : grisée et cochée pour un admin)
+        el('label', { class: 'case', style: 'margin:0', title: c.admin ? 'Compris dans Admin' : null },
+          el('input', { type: 'checkbox', checked: !!(c.magasinier || c.admin), disabled: !!c.admin, onchange: async ev => {
+            const voulu = ev.target.checked;
+            if (!confirm(voulu ? `« ${c.identifiant} » devient magasinier ? (tout voir et modifier, appli et site)` : `« ${c.identifiant} » passe en lecture seule ? (le stock seulement, dans l'appli)`)) { ev.target.checked = !voulu; return; }
+            try { const x = await rpc('definir_magasinier', { ...moi(), p_compte: c.id, p_magasinier: voulu }); alert(x.message); }
+            catch (e) { alert(e.message); }
+            principal('comptes');
+          } }), 'Magasinier'),
         // La coche admin : un admin la donne ou la retire ; le document refuse de retirer le dernier admin
         el('label', { class: 'case', style: 'margin:0' },
           el('input', { type: 'checkbox', checked: !!c.admin, onchange: async ev => {
             const voulu = ev.target.checked;
-            if (!confirm(voulu ? `« ${c.identifiant} » devient admin ? (code magasinier, comptes, retirer un appareil)` : `« ${c.identifiant} » n'est plus admin ?`)) { ev.target.checked = !voulu; return; }
+            if (!confirm(voulu ? `« ${c.identifiant} » devient admin ? (comptes, coches, appareils)` : `« ${c.identifiant} » n'est plus admin ? (il reste ${c.magasinier ? 'magasinier' : 'en lecture seule, sans la coche Magasinier'})`)) { ev.target.checked = !voulu; return; }
             try { const x = await rpc('definir_admin', { ...moi(), p_compte: c.id, p_admin: voulu }); alert(x.message); }
             catch (e) { alert(e.message); }
             if (c.moi && !voulu) await demarrer(); else principal('comptes');
@@ -2887,7 +2898,8 @@ async function pageComptes(corps) {
  * La liste des appareils autorisés (le téléphone de l'appli, chaque navigateur connecté au site) ; on peut leur donner un nom.
  * Sanji, 12/11 : « je pensais plutôt à un dépliant par utilisateur » : un dossier par compte (ses téléphones et navigateurs
  * dedans), « Sans compte » en dernier (un téléphone de l'appli en lecture seule).
- * Autoriser ou retirer un appareil reste dans l'appli (admin).
+ * Sanji, 12/11 : plus de code magasinier. Un admin autorise (ou refuse) ici les navigateurs en attente, et retire un appareil
+ * (perdu, changé, personne partie) ; un téléphone de l'appli est autorisé dès qu'on s'y connecte.
  */
 function blocAppareils() {
   const zone = el('div', { style: 'padding:0 0 4px' }, el('p', { class: 'aide', style: 'padding:0 12px' }, 'Chargement…'));
@@ -2899,7 +2911,32 @@ function blocAppareils() {
       vider(zone);
       if (!r.ok) { zone.append(el('p', { class: 'erreur', style: 'padding:0 12px' }, r.message)); return; }
       const l = r.appareils || [];
-      det.querySelector('summary').textContent = `Appareils autorisés (${l.length})`;
+      const attente = r.attente || [];
+      det.querySelector('summary').textContent = `Appareils autorisés (${l.length})` + (attente.length ? ` · ${attente.length} en attente` : '');
+      // Les navigateurs qui attendent un admin, en premier
+      if (attente.length) {
+        const bloc = el('div', { class: 'carte', style: 'margin:0 12px 10px;border-color:var(--orange, #eda100)' },
+          el('div', { style: 'font-weight:700' }, `En attente d'un admin (${attente.length})`),
+          el('p', { class: 'aide', style: 'margin:4px 0' }, etat.admin
+            ? 'Quelqu\'un s\'est connecté sur un nouveau navigateur. Autorise-le seulement si tu sais qui c\'est (demande-lui le code affiché sur son écran).'
+            : 'Seul un admin peut les autoriser.'));
+        attente.forEach(a => bloc.append(el('div', { class: 'rangee', style: 'padding:8px 0;border-top:1px solid var(--ligne);flex-wrap:wrap' },
+          el('div', { class: 'etire' },
+            el('div', { style: 'font-weight:700' }, a.compte || '?', el('span', { class: 'aide', style: 'font-weight:400' }, ' · ' + (a.modele || 'navigateur'))),
+            el('div', { class: 'aide' }, a.derniere_synchro ? `connecté le ${jourHeure(a.derniere_synchro)}` : ''),
+            el('div', { class: 'aide', style: 'font-family:ui-monospace,Menlo,Consolas,monospace' }, a.id)),
+          etat.admin ? el('button', { class: 'petit', onclick: async () => {
+            if (!confirm(`Autoriser ce navigateur pour « ${a.compte} » (${a.id}) ?`)) return;
+            try { const x = await rpc('valider_appareil', { ...moi(), p_cible: a.id }); if (!x.ok) alert(x.message); await charger(); }
+            catch (e) { alert(e.message); }
+          } }, 'Autoriser') : null,
+          etat.admin ? el('button', { class: 'petit danger', onclick: async () => {
+            if (!confirm(`Refuser ce navigateur (${a.id}) ? Il ne verra rien.`)) return;
+            try { const x = await rpc('retirer_appareil', { ...moi(), p_code: '', p_cible: a.id }); if (!x.ok) alert(x.message); await charger(); }
+            catch (e) { alert(e.message); }
+          } }, 'Refuser') : null)));
+        zone.append(bloc);
+      }
       // Un dossier par utilisateur (dans l'ordre alphabétique, « Sans compte » à la fin) ; dedans, l'ordre du document
       // (cet appareil d'abord, puis le plus récemment vu)
       const groupes = new Map();
@@ -2919,7 +2956,9 @@ function blocAppareils() {
         zone.append(d);
         liste.forEach(a => ligneAppareil(corps, a));
       });
-      zone.append(el('p', { class: 'aide', style: 'margin:8px 12px 6px' }, 'Pour retirer un appareil (perdu, changé…) : dans l\'appli, par un admin, avec le code magasinier.'));
+      zone.append(el('p', { class: 'aide', style: 'margin:8px 12px 6px' }, etat.admin
+        ? 'Retirer un appareil (perdu, changé, personne partie) : il ne voit plus rien jusqu\'à ce qu\'on s\'y reconnecte (un navigateur repasse alors par ton accord). Pour couper une personne partout, retire plutôt son compte.'
+        : 'Retirer un appareil : demande à un admin.'));
     } catch (e) { vider(zone).append(el('p', { class: 'erreur', style: 'padding:0 12px' }, e.message)); }
   }
   function ligneAppareil(corps, a) {
@@ -2937,7 +2976,17 @@ function blocAppareils() {
         if (v === null) return;
         try { const x = await rpc('renommer_appareil', { ...moi(), p_cible: a.id, p_libelle: v }); if (!x.ok) alert(x.message); await charger(); }
         catch (e) { alert(e.message); }
-      } }, 'Renommer')));
+      } }, 'Renommer'),
+      etat.admin ? el('button', { class: 'petit danger', onclick: async () => {
+        if (!confirm(a.moi ? 'C\'est CET appareil : tu seras déconnecté ici, et un admin devra de nouveau l\'autoriser. Retirer quand même ?'
+                           : `Retirer « ${nom} » (${a.id}) ? Il ne verra plus rien jusqu'à ce qu'on s'y reconnecte.`)) return;
+        try {
+          const x = await rpc('retirer_appareil', { ...moi(), p_code: '', p_cible: a.id });
+          if (!x.ok) { alert(x.message); return; }
+          if (x.moi) { etat.identifiant = null; etat.donnees = {}; ecranConnexion('Cet appareil a été retiré.'); return; }
+          await charger();
+        } catch (e) { alert(e.message); }
+      } }, 'Retirer') : null));
   }
   const det = el('details', { class: 'dossier', style: 'margin-top:16px', ontoggle: () => { if (det.open && !charge) { charge = true; charger(); } } },
     el('summary', {}, 'Appareils autorisés'), zone);
@@ -2947,18 +2996,27 @@ function blocAppareils() {
 function fenetreCompte(c) {
   const ident = el('input', { type: 'text', autocapitalize: 'words', placeholder: 'Prénom' });
   const mdp = el('input', { type: 'text', autocomplete: 'off', placeholder: '6 caractères au moins' });
+  const magasinier = el('input', { type: 'checkbox' });
   const msg = el('p', { class: 'erreur' });
   ouvrirFenetre(el('div', {},
     el('h2', {}, c ? `Mot de passe oublié : ${c.identifiant}` : 'Nouveau compte'),
     el('p', { class: 'aide' }, 'Tu lui donneras le mot de passe provisoire à l\'oral ; il le changera à sa connexion.'),
     c ? null : el('label', {}, 'Identifiant (son prénom)'), c ? null : ident,
-    el('label', {}, 'Mot de passe provisoire'), mdp, msg,
+    el('label', {}, 'Mot de passe provisoire'), mdp,
+    // Sanji, 12/11 : la coche Magasinier (sans elle : lecture seule, le stock dans l'appli)
+    c ? null : el('label', { class: 'case' }, magasinier, 'Magasinier (tout voir et modifier, appli et site)'),
+    msg,
     el('button', { class: 'principal', onclick: async () => {
       try {
         const r = c ? await rpc('reinitialiser_compte', { ...moi(), p_compte: c.id, p_provisoire: mdp.value })
                     : await rpc('creer_compte', { ...moi(), p_identifiant: ident.value.trim(), p_provisoire: mdp.value });
         if (!r.ok) { msg.textContent = r.message; return; }
-        fermerFenetre(); alert(r.message); principal('comptes');
+        let texte = r.message;
+        if (!c && magasinier.checked && r.id) {
+          const m = await rpc('definir_magasinier', { ...moi(), p_compte: r.id, p_magasinier: true });
+          texte += m.ok ? ' Coche Magasinier mise.' : ` (Coche Magasinier : ${m.message})`;
+        }
+        fermerFenetre(); alert(texte); principal('comptes');
       } catch (e) { msg.textContent = e.message; }
     } }, 'Enregistrer'),
     el('button', { class: 'second', style: 'width:100%;margin-top:8px', onclick: fermerFenetre }, 'Annuler')));
