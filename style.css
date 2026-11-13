@@ -223,7 +223,9 @@ img.dessin { display: block; max-width: 100%; margin-top: 8px; border-radius: 8p
   .voile { align-items: center; }
   .fenetre { border-radius: 16px; }
 }
-/* L'interrupteur « Hors stock » (Sanji, 13/11 : « un bouton switch à côté de Sélection multiple ») */
+/* Cases à allumer (Sélection multiple, Hors stock) : un liseré quand c'est éteint, rempli quand c'est actif (Sanji, 13/11) */
+button.second.bascule.actif { background: var(--accent); color: var(--sur-accent); border-color: var(--accent); }
+/* (ancien interrupteur à glissière, plus utilisé) */
 .interrupteur { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: var(--encre);
   padding: 8px 12px; border: 1px solid var(--ligne); border-radius: 10px; background: var(--carte); user-select: none; }
 .interrupteur input { position: absolute; opacity: 0; width: 1px; height: 1px; }

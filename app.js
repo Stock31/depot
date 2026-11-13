@@ -1171,14 +1171,13 @@ function pageStock(corps) {
     // Sanji : « en Excel, la roue crantée c'est pour ajouter des colonnes et autres réglages »
     el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'),
     // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
-    // Sanji, 13/11 : « Sélection multiple » (plutôt que « Plusieurs »), puis « même chose pour Sélection multiple : un switch »
-    affichageStock() === 'tableau' ? el('label', { class: 'interrupteur' + (etat.selection ? ' allume' : '') },
-      el('input', { type: 'checkbox', role: 'switch', checked: !!etat.selection, onchange: ev => { etat.selection = ev.target.checked ? new Set() : null; principal('stock'); } }),
-      el('span', { class: 'glissiere' }), 'Sélection multiple') : null,
-    // L'interrupteur « Hors stock » : allumé, la liste montre les articles hors stock ; une puce (Tous, À signaler…) l'éteint
-    el('label', { class: 'interrupteur' + (etat.filtre === 'passtock' ? ' allume' : ''), title: 'Les articles qu\'on ne garde pas au dépôt' },
-      el('input', { type: 'checkbox', role: 'switch', checked: etat.filtre === 'passtock', onchange: ev => { etat.filtre = ev.target.checked ? 'passtock' : 'tous'; principal('stock'); } }),
-      el('span', { class: 'glissiere' }), nPasStockes ? `Hors stock (${nPasStockes})` : 'Hors stock'));
+    // Sanji, 13/11 : « Sélection multiple » et « Hors stock » : un liseré quand c'est éteint, rempli quand c'est actif
+    // (comme la case Routine de l'appli) ; « Hors stock » montre les articles qu'on ne garde pas au dépôt ; une puce l'éteint
+    affichageStock() === 'tableau' ? el('button', { class: 'second bascule' + (etat.selection ? ' actif' : ''), 'aria-pressed': etat.selection ? 'true' : 'false',
+      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, 'Sélection multiple') : null,
+    el('button', { class: 'second bascule' + (etat.filtre === 'passtock' ? ' actif' : ''), 'aria-pressed': etat.filtre === 'passtock' ? 'true' : 'false',
+      title: 'Les articles qu\'on ne garde pas au dépôt', onclick: () => { etat.filtre = etat.filtre === 'passtock' ? 'tous' : 'passtock'; principal('stock'); } },
+      nPasStockes ? `Hors stock (${nPasStockes})` : 'Hors stock'));
   corps.append(outils, champ, puces, filtresZone, liste);
   if (etat.selection && affichageStock() === 'tableau') { corps.classList.add('avec-barre'); corps.append(barreLot()); }
   else etat.majBarreLot = null;
