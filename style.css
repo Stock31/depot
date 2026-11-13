@@ -225,6 +225,26 @@ img.dessin { display: block; max-width: 100%; margin-top: 8px; border-radius: 8p
 }
 /* Cases à allumer (Sélection multiple, Hors stock) : un liseré quand c'est éteint, rempli quand c'est actif (Sanji, 13/11) */
 button.second.bascule.actif { background: var(--accent); color: var(--sur-accent); border-color: var(--accent); }
+/* Calculette flottante (Sanji, 13/11 : « comme la pastille de scan ») : au-dessus de tout, déplaçable par son titre */
+.calculette { position: fixed; z-index: 25; width: 232px; background: var(--carte); border: 2px solid var(--accent); border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 0 8px 8px; user-select: none; -webkit-user-select: none; outline: none; }
+.calculette:focus-visible { box-shadow: 0 0 0 3px var(--accent), 0 8px 24px rgba(0,0,0,.28); }
+.calc-titre { display: flex; align-items: center; justify-content: space-between; margin: 0 -8px; padding: 6px 6px 6px 12px;
+  font-size: 13px; font-weight: 700; color: var(--accent); cursor: move; touch-action: none; }
+.calc-fermer { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--gris); font-size: 16px; cursor: pointer; }
+.calc-ecran { background: var(--fond); border-radius: 8px; padding: 4px 10px 6px; text-align: right; margin-bottom: 6px; }
+.calc-calcul { font-size: 13px; color: var(--gris); min-height: 18px; overflow-wrap: anywhere; }
+.calc-resultat { font-size: 28px; font-weight: 700; color: var(--encre); line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calc-resultat.vide { color: var(--gris); }
+.calc-pave { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.calc-touche { height: 40px; padding: 0; border: 1px solid var(--ligne); border-radius: 8px; background: var(--carte); color: var(--encre);
+  font-size: 18px; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.calc-touche.signe { color: var(--accent); }
+.calc-touche.egal { background: var(--accent); color: var(--sur-accent); border-color: var(--accent); }
+.calc-touche:active { filter: brightness(.92); }
+.calc-case { width: 100%; margin-top: 6px; padding: 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--carte);
+  color: var(--accent); font-weight: 600; font-size: 14px; cursor: pointer; }
+.calc-case:disabled { border-color: var(--ligne); color: var(--gris); cursor: default; opacity: 1; }
 /* (ancien interrupteur à glissière, plus utilisé) */
 .interrupteur { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: var(--encre);
   padding: 8px 12px; border: 1px solid var(--ligne); border-radius: 10px; background: var(--carte); user-select: none; }

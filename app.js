@@ -432,6 +432,7 @@ const ecranSansCoche = () => ecranPasEncore('Lecture seule',
 async function seDeconnecter() {
   try { await rpc('deconnecter', moi()); } catch (e) { /* on se déconnecte quand même ici */ }
   etat.identifiant = null; etat.donnees = {};
+  if (typeof fermerCalculette === 'function') fermerCalculette();
   ecranConnexion('Tu es déconnecté.');
 }
 
@@ -1177,7 +1178,11 @@ function pageStock(corps) {
       onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, 'Sélection multiple') : null,
     el('button', { class: 'second bascule' + (etat.filtre === 'passtock' ? ' actif' : ''), 'aria-pressed': etat.filtre === 'passtock' ? 'true' : 'false',
       title: 'Les articles qu\'on ne garde pas au dépôt', onclick: () => { etat.filtre = etat.filtre === 'passtock' ? 'tous' : 'passtock'; principal('stock'); } },
-      nPasStockes ? `Hors stock (${nPasStockes})` : 'Hors stock'));
+      nPasStockes ? `Hors stock (${nPasStockes})` : 'Hors stock'),
+    // Sanji, 13/11 : « une petite calculette en plus, en pop-up, à activer comme Hors stock » ; elle flotte sur la page
+    // comme la pastille SCAN de l'appli (calculette.js)
+    el('button', { class: 'second bascule' + (CALCULETTE.vue ? ' actif' : ''), 'data-calculette': '', 'aria-pressed': CALCULETTE.vue ? 'true' : 'false',
+      title: 'Une petite calculette qui flotte sur la page', onclick: basculerCalculette }, 'Calculette'));
   corps.append(outils, champ, puces, filtresZone, liste);
   if (etat.selection && affichageStock() === 'tableau') { corps.classList.add('avec-barre'); corps.append(barreLot()); }
   else etat.majBarreLot = null;
