@@ -240,7 +240,7 @@ function statut(tab, o) {
   if (o.signaler === false) return 'OK';
   return o.alerte_vue ? 'VUE' : 'SIGNALER';
 }
-const LIBELLES = { MANQUE: 'Manque !', SIGNALER: 'À signaler', VUE: 'Vu', COMPTER: 'À compter', OK: 'OK', DECIDER: 'Pas stocké', CORBEILLE: 'Corbeille' };
+const LIBELLES = { MANQUE: 'Manque !', SIGNALER: 'À signaler', VUE: 'Vu', COMPTER: 'À compter', OK: 'OK', DECIDER: 'Hors stock', CORBEILLE: 'Corbeille' };
 const enAlerte = s => s === 'MANQUE' || s === 'SIGNALER' || s === 'VUE';
 
 /** Ce qu'on peut prendre maintenant (null = on ne sait pas : compté au niveau, ou jamais compté). */
@@ -806,8 +806,8 @@ function editeurArticle(t, o0) {
     t === 'descentes' ? [el('label', {}, 'Tuyaux par carton'), parCarton] : null,
     blocSeuil,
     el('label', { class: 'case' }, signaler, 'Prévenir quand il en manque (À signaler)'),
-    el('label', { class: 'case' }, pasStocke, 'Pas stocké : on n\'en a pas et on n\'en veut pas'),
-    el('p', { class: 'aide', style: 'margin-top:-4px' }, 'L\'article reste (sa référence aussi), mais il sort du stock, des alertes, des routines et des stats. On le retrouve avec le filtre « Pas stockés ».'),
+    el('label', { class: 'case' }, pasStocke, 'Hors stock : on ne le garde pas au dépôt'),
+    el('p', { class: 'aide', style: 'margin-top:-4px' }, 'L\'article et sa référence restent, mais il sort du stock, des alertes, des routines et des stats. La puce « Hors stock » les retrouve.'),
     el('label', {}, 'Note'), note,
     neuf ? null : el('p', { class: 'aide', style: 'margin-top:12px' }, `Dernier changement : ${o.maj_par || '?'}${o.maj ? ' le ' + jour(o.maj) : ''}`),
     msg,
@@ -876,7 +876,7 @@ function celluleBobines(o) {
  * (tout le stock, par pages de 100, filtres par type et par personne). Les mêmes phrases que le 🕘 de l'appli (Edition.kt). */
 const CASES_HISTO = { nom: 'Nom', nom_court: 'Nom court', ref: 'Référence', zone: 'Emplacement', famille: 'Famille',
   fournisseur: 'Fournisseur', mode: 'Façon de compter', unite: 'Unité', seuil: 'Seuil', signaler: 'Alerte', note: 'Note',
-  couleur: 'Couleur', suivi: 'Stocké', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Tuyaux' };
+  couleur: 'Couleur', suivi: 'En stock', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Tuyaux' };
 const IGNOREES_HISTO = new Set(['compte', 'compte_par', 'compte_appareil', 'ordre', 'g_ordre', 'alerte_vue_par', 'horodatages',
   'maj', 'maj_par', 'maj_appareil', 'maj_serveur', 'cree_le', 'stock_max']);
 const COMPTES_HISTO = ['quantite', 'niveau', 'metres', 'cartons', 'tuyaux'];
@@ -1072,7 +1072,7 @@ function pageStock(corps) {
   // Sanji, 13/11 : « Pas stocké » (on n'en a pas et on n'en veut pas) : hors du stock et des routines, mais retrouvable ici
   const nPasStockes = ARTICLES.reduce((n, t) => n + tous(t).filter(o => o.suivi === false).length, 0);
   const filtres = [['tous', 'Tous', tousArticles.length], ['signaler', 'À signaler', tousArticles.filter(x => enAlerte(x.s)).length], ['compter', 'À compter', tousArticles.filter(x => x.s === 'COMPTER').length]];
-  if (nPasStockes || etat.filtre === 'passtock') filtres.push(['passtock', 'Pas stockés', nPasStockes]);
+  if (nPasStockes || etat.filtre === 'passtock') filtres.push(['passtock', 'Hors stock', nPasStockes]);
   function dessinerPuces() {
     vider(puces).append(...filtres.map(([k, lib, n]) => el('button', { class: k === etat.filtre ? 'actif' : '', onclick: () => { etat.filtre = k; dessinerPuces(); dessiner(); } }, `${lib}  ${n}`)));
   }
@@ -1215,7 +1215,7 @@ const COLONNES_TOUTES = [
   { k: 'unite', titre: 'Unité', val: (t, o) => t !== 'accessoires' ? 'ml' : o.mode === 'niveau' ? '—' : (o.unite || 'pièces'), tri: (t, o) => t !== 'accessoires' ? 'ml' : (o.unite || 'pièces') },
   { k: 'par_carton', titre: 'Contenance', val: (t, o) => num(o.par_carton) === null ? '—' : nombreJoli(num(o.par_carton)), tri: (t, o) => num(o.par_carton) },
   { k: 'note', titre: 'Note', classe: 'note', val: (t, o) => o.note || '—', tri: (t, o) => o.note },
-  { k: 'suivi', titre: 'Stocké', val: (t, o) => o.suivi === false ? 'Non' : 'Oui', tri: (t, o) => o.suivi === false ? 1 : 0 },
+  { k: 'suivi', titre: 'Hors stock', val: (t, o) => o.suivi === false ? 'Oui' : '—', tri: (t, o) => o.suivi === false ? 1 : 0 },
   { k: 'maj', titre: 'Dernier changement', val: (t, o) => o.maj ? `${jour(o.maj)}${o.maj_par ? ' · ' + o.maj_par : ''}` : '—', tri: (t, o) => o.maj },
 ];
 // Le stock et l'état juste après le nom : sur téléphone, c'est ce qu'on voit sans faire défiler de côté
@@ -1567,8 +1567,8 @@ const EDITEURS = {
   par_carton: (t, o) => (t === 'descentes' || (t === 'accessoires' && o.mode !== 'niveau')) ? caseNombre(o, 'par_carton') : null,
   note: (t, o) => caseTexte(o, 'note'),
   // Sanji, 13/11 : « Pas stocké », aussi en lot (« ☑ Plusieurs » → colonne « Stocké » → Non)
-  suivi: (t, o) => ({ type: 'liste', options: [['oui', 'Oui'], ['non', 'Non (pas stocké)']], valeur: o.suivi === false ? 'non' : 'oui',
-    lire: v => (v === 'non') === (o.suivi === false) ? null : { suivi: v !== 'non' } }),
+  suivi: (t, o) => ({ type: 'liste', options: [['non', 'Non'], ['oui', 'Oui (hors stock)']], valeur: o.suivi === false ? 'oui' : 'non',
+    lire: v => (v === 'oui') === (o.suivi === false) ? null : { suivi: v !== 'oui' } }),
 };
 
 /** La case Stock : un nombre ou un niveau se tape sur place ; bobines, descentes et « mixte » ouvrent une petite fenêtre. */
