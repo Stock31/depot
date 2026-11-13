@@ -1072,7 +1072,7 @@ function pageStock(corps) {
   // Sanji, 13/11 : « Pas stocké » (on n'en a pas et on n'en veut pas) : hors du stock et des routines, mais retrouvable ici
   const nPasStockes = ARTICLES.reduce((n, t) => n + tous(t).filter(o => o.suivi === false).length, 0);
   const filtres = [['tous', 'Tous', tousArticles.length], ['signaler', 'À signaler', tousArticles.filter(x => enAlerte(x.s)).length], ['compter', 'À compter', tousArticles.filter(x => x.s === 'COMPTER').length]];
-  if (nPasStockes || etat.filtre === 'passtock') filtres.push(['passtock', 'Hors stock', nPasStockes]);
+  // (Sanji, 13/11 : « plutôt un bouton switch à côté de Sélection multiple » : un interrupteur « Hors stock », pas une puce)
   function dessinerPuces() {
     vider(puces).append(...filtres.map(([k, lib, n]) => el('button', { class: k === etat.filtre ? 'actif' : '', onclick: () => { etat.filtre = k; dessinerPuces(); dessiner(); } }, `${lib}  ${n}`)));
   }
@@ -1173,7 +1173,11 @@ function pageStock(corps) {
     // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
     affichageStock() === 'tableau' ? el('button', { class: etat.selection ? 'principal' : 'second', style: etat.selection ? 'width:auto;margin:0' : null,
       // Sanji, 13/11 : la case vide quand ce n'est pas utilisé, cochée une fois activé ; « Sélection multiple » plutôt que « Plusieurs »
-      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '☑ Sélection multiple' : '☐ Sélection multiple') : null);
+      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '☑ Sélection multiple' : '☐ Sélection multiple') : null,
+    // L'interrupteur « Hors stock » : allumé, la liste montre les articles hors stock ; une puce (Tous, À signaler…) l'éteint
+    el('label', { class: 'interrupteur' + (etat.filtre === 'passtock' ? ' allume' : ''), title: 'Les articles qu\'on ne garde pas au dépôt' },
+      el('input', { type: 'checkbox', role: 'switch', checked: etat.filtre === 'passtock', onchange: ev => { etat.filtre = ev.target.checked ? 'passtock' : 'tous'; principal('stock'); } }),
+      el('span', { class: 'glissiere' }), nPasStockes ? `Hors stock (${nPasStockes})` : 'Hors stock'));
   corps.append(outils, champ, puces, filtresZone, liste);
   if (etat.selection && affichageStock() === 'tableau') { corps.classList.add('avec-barre'); corps.append(barreLot()); }
   else etat.majBarreLot = null;
