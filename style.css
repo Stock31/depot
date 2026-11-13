@@ -74,6 +74,8 @@ button.principal { background: var(--accent); color: var(--sur-accent); border: 
 button.second { background: var(--carte); color: var(--accent); border: 1px solid var(--accent); }
 button.petit { padding: 7px 12px; font-size: 14px; background: var(--carte); color: var(--accent); border: 1px solid var(--ligne); }
 button.danger { color: var(--rouge); border-color: var(--rouge); }
+/* Un ✕ armé : le premier appui le passe en rouge, le second supprime (Sanji, 13/11) */
+button.arme, button.danger.arme { background: var(--rouge); color: var(--sur-accent); border-color: var(--rouge); }
 button:disabled { opacity: .5; }
 .rangee { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .rangee > .etire { flex: 1; min-width: 0; }

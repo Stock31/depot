@@ -41,6 +41,22 @@ function el(tag, props, ...enfants) {
   return e;
 }
 function vider(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
+/**
+ * Un ✕ qui supprime (Sanji, 13/11 : « un double clic ou un double tap pour supprimer quelque chose par ✕ ») : le premier
+ * appui l'arme (rouge, « ✕ ? »), le second dans les 3 secondes supprime ; sinon il redevient normal.
+ */
+function boutonSupprimer(titre, action, classe) {
+  let minuterie = null;
+  const remettre = () => { minuterie = null; b.classList.remove('arme'); b.textContent = '✕'; };
+  const b = el('button', { class: classe || 'petit danger', type: 'button', title: `${titre} (touche deux fois)` }, '✕');
+  b.addEventListener('click', ev => {
+    ev.stopPropagation();
+    if (minuterie) { clearTimeout(minuterie); remettre(); action(ev); return; }
+    b.classList.add('arme'); b.textContent = '✕ ?';
+    minuterie = setTimeout(remettre, 3000);
+  });
+  return b;
+}
 /** Ajoute des enfants en sautant les « rien » (null, false) : append() les écrirait en toutes lettres. */
 function ajouterA(parent, ...enfants) { parent.append(...enfants.flat().filter(c => c !== null && c !== undefined && c !== false)); return parent; }
 function hex(n) { const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); }
@@ -1561,12 +1577,11 @@ function caseBobine(o, i, coef) {
   const m = metres(o), nouvelle = i >= m.length;
   const td = el('td', { class: 'nombre modifiable', title: 'Toucher pour modifier' + (coef ? ' (ou taper le poids suivi de « kg »)' : '') },
     nouvelle ? el('span', { class: 'aide' }, 'nouvelle bobine') : `${nombreJoli(m[i])} ml`,
-    nouvelle ? null : el('button', { class: 'petit croix-bobine', type: 'button', title: 'Enlever cette bobine', onclick: async ev => {
-      ev.stopPropagation();
-      if (!(await confirmer(`Enlever la bobine n°${i + 1} (${nombreJoli(m[i])} ml) ?`))) return;
+    // Double appui pour l'enlever (Sanji, 13/11), à la place de la question
+    nouvelle ? null : boutonSupprimer(`Enlever la bobine n°${i + 1} (${nombreJoli(m[i])} ml)`, () => {
       const l = m.slice(); l.splice(i, 1);
       ecrireComptage('bobines', o, { metres: l });
-    } }, '✕'));
+    }, 'petit croix-bobine'));
   td.addEventListener('click', ev => {
     ev.stopPropagation();
     editerSousCase(td, nouvelle ? '' : nombreJoli(m[i]), `Bobine n°${i + 1}` + (nouvelle ? ' (nouvelle)' : ''),
@@ -1762,7 +1777,7 @@ function fenetreCompter(t, o) {
       const i = el('input', { type: 'text', inputmode: 'decimal', value: v === null ? '' : nombreJoli(v), placeholder: 'nouvelle bobine (mètres)',
         'data-bobine': '1', 'data-coef': coef ?? '', autocomplete: 'off' });
       const ligne = el('div', { class: 'ligne-bobine' }, el('span', { class: 'num-bobine' }),
-        i, el('button', { class: 'petit', type: 'button', title: 'Enlever cette bobine', onclick: () => { ligne.remove(); assurerVide(); maj(); } }, '✕'));
+        i, boutonSupprimer('Enlever cette bobine', () => { ligne.remove(); assurerVide(); maj(); }, 'petit'));
       i.addEventListener('input', () => { assurerVide(); maj(); });
       // Au clavier (ordinateur) : Entrée passe à la bobine suivante
       i.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); const c = cases(); const s = c[c.indexOf(i) + 1]; if (s) s.focus(); } });
@@ -2227,7 +2242,7 @@ function editeurDepart(dExistant, options) {
         el('button', { class: 'petit', onclick: () => changer(-1) }, '−'), nVue, el('button', { class: 'petit', onclick: () => changer(1) }, '+'),
         l.t === 'descentes' ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, uniteDescente(l.u))
           : el('span', { class: 'aide' }, uniteLigne(l.t, o, l.u)),
-        el('button', { class: 'petit danger', onclick: () => { brouillon.lignes.splice(i, 1); dessiner(); } }, '✕')));
+        boutonSupprimer('Enlever cette ligne', () => { brouillon.lignes.splice(i, 1); dessiner(); })));
     });
     const date = el('input', { type: 'date', value: brouillon.pourLe, oninput: e => { brouillon.pourLe = e.target.value; } });
     ajouterA(zone,
@@ -2563,7 +2578,7 @@ function editeurKit(k0) {
         } }, '+'),
         l.t === 'descentes' && !pret ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, uniteDescente(l.u))
           : el('span', { class: 'aide' }, uniteLigne(l.t, o, l.u)),
-        pret ? null : el('button', { class: 'petit danger', onclick: () => { brouillon.lignes.splice(i, 1); dessiner(); } }, '✕')));
+        pret ? null : boutonSupprimer('Enlever cette ligne', () => { brouillon.lignes.splice(i, 1); dessiner(); })));
     });
     const msg = el('p', { class: 'erreur' });
     ajouterA(zone,
