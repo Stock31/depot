@@ -68,6 +68,11 @@ function toucheCalcul(s, k) {
       return s + k;
     case '(': return apresNombre ? s + '×(' : s + '(';
     case ')': return ouvertes > 0 && apresNombre ? s + ')' : s;
+    // Sanji, 13/11 : une seule touche ( ) « comme une vraie » : elle ferme s'il y en a une ouverte et qu'on vient de finir
+    // un nombre (ou une parenthèse) ; sinon elle ouvre (après un signe, au début, après « ( ») — 3( devient 3×(
+    case '( )':
+      if (ouvertes > 0 && /[0-9)]/.test(dernier)) return s + ')';
+      return apresNombre ? s + '×(' : s + '(';
     case ',':
       if (nombreEnCours.includes(',')) return s;
       return (/[0-9]$/.test(s) ? s : s + (dernier === ')' ? '×0' : '0')) + ',';
@@ -80,6 +85,16 @@ function toucheCalcul(s, k) {
 }
 
 const CALCULETTE = { vue: null, saisie: '' };
+
+/*
+ * La disposition des touches, la même partout (appli, pavé du téléphone, calculette de l'ordinateur ; Sanji, 13/11) :
+ *     7  8  9  ÷  C
+ *     4  5  6  ×  ( )
+ *     1  2  3  −  ┐ la grande touche de validation (✓, ou deux touches),
+ *     0  ,  ⌫  +  ┘ ou « = » dans la calculette de l'ordinateur
+ */
+const TOUCHES_CALCUL = ['7', '8', '9', '÷', 'C', '4', '5', '6', '×', '( )', '1', '2', '3', '−', '0', ',', '⌫', '+'];
+const SIGNES_CALCUL = ['÷', '×', '−', '+', '( )', ','];
 
 /** La case de nombre en cours (tableau, barre « Sélection multiple », fenêtres), s'il y en a une. */
 function caseNombreActive() {
@@ -112,32 +127,36 @@ const PAVE = { vue: null, cible: null, saisie: '', remplacer: false, ecranCalcul
 
 function construirePave() {
   const garder = ev => ev.preventDefault();           // toucher le pavé ne fait pas quitter la case
-  const touche = k => el('button', { class: 'pave-touche' + ('÷×−+()=,'.includes(k) ? ' signe' : ''), tabindex: '-1', type: 'button',
+  const touche = k => el('button', { class: 'pave-touche' + (SIGNES_CALCUL.includes(k) ? ' signe' : ''), tabindex: '-1', type: 'button',
     onclick: () => appuyerPave(k) }, k);
   PAVE.ecranTitre = el('div', { class: 'pave-titre' });
   PAVE.ecranCalcul = el('div', { class: 'calc-calcul' });
   PAVE.ecranResultat = el('div', { class: 'calc-resultat' });
   PAVE.ecranDetail = el('div', { class: 'pave-detail' });
-  PAVE.actions = el('div', { class: 'pave-actions' });
+  // La colonne de validation, à droite des deux dernières rangées (une grande touche ✓, ou deux touches l'une sur l'autre)
+  PAVE.actions = el('div', { class: 'pave-valider' });
   PAVE.vue = el('div', { class: 'pave', role: 'group', 'aria-label': 'Pavé de nombres' },
     el('div', { class: 'pave-ecran' }, PAVE.ecranTitre, el('div', { class: 'pave-droite' }, PAVE.ecranCalcul, PAVE.ecranResultat, PAVE.ecranDetail)),
-    el('div', { class: 'pave-touches' },
-      ['7', '8', '9', '÷', '(', '4', '5', '6', '×', ')', '1', '2', '3', '−', ',', 'C', '0', '⌫', '+', '='].map(touche)),
-    PAVE.actions);
+    el('div', { class: 'pave-touches' }, ...TOUCHES_CALCUL.map(touche), PAVE.actions));
   PAVE.vue.addEventListener('mousedown', garder);
   PAVE.vue.addEventListener('pointerdown', garder);
   document.body.append(PAVE.vue);
 }
 
-/** Les touches d'action selon la case : bobine, descentes, ou « OK ». */
+/**
+ * Les touches de validation selon la case (Sanji, 13/11 : « = et valider, c'est la même chose » ; « pas de bouton Valider ») :
+ * une grande touche ✓ d'office ; deux touches quand il y a deux façons de valider (bobine : Mètres / Kg ; descentes :
+ * Carton / Descente).
+ */
 function actionsPave(cible) {
-  const bouton = (lib, faire, actif = true) => el('button', { class: 'pave-action', type: 'button', tabindex: '-1', disabled: !actif, onclick: faire }, lib);
+  const bouton = (lib, faire, actif = true, grand = false) => el('button', { class: 'pave-action' + (grand ? ' grand' : ''), type: 'button',
+    tabindex: '-1', disabled: !actif, 'aria-label': grand ? 'Valider' : lib, onclick: faire }, lib);
   if (cible.dataset.bobine) {
     const coef = num(cible.dataset.coef);
     return [bouton('Mètres', () => validerPave('m')), bouton('Kg', () => validerPave('kg'), coef !== null && coef > 0)];
   }
   if (cible.dataset.descente) return [bouton('Carton', () => validerPave('cartons')), bouton('Descente', () => validerPave('tuyaux'))];
-  return [bouton('OK', () => validerPave('ok'))];
+  return [bouton('✓', () => validerPave('ok'), true, true)];
 }
 
 function ouvrirPave(cible) {
@@ -293,10 +312,9 @@ function ouvrirCalculette() {
     resultatVue.title = calcul && r === null ? 'Calcul impossible' : '';
   };
   const appuyer = k => { CALCULETTE.saisie = toucheCalcul(CALCULETTE.saisie, k); maj(); };
-  const touche = k => el('button', { class: 'calc-touche' + ('÷×−+()=,'.includes(k) ? ' signe' : '') + (k === '=' ? ' egal' : ''), tabindex: '-1',
+  const touche = k => el('button', { class: 'calc-touche' + (SIGNES_CALCUL.includes(k) ? ' signe' : '') + (k === '=' ? ' egal' : ''), tabindex: '-1',
     onclick: () => appuyer(k) }, k);
-  const pave = el('div', { class: 'calc-pave' },
-    ['7', '8', '9', '÷', '4', '5', '6', '×', '1', '2', '3', '−', 'C', '0', '⌫', '+', '(', ')', ',', '='].map(touche));
+  const pave = el('div', { class: 'calc-pave' }, ...TOUCHES_CALCUL.map(touche), touche('='));
   dansLaCase.addEventListener('click', () => {
     const c = caseNombreActive(), r = resultatCalcul(CALCULETTE.saisie);
     if (!c || r === null) return;

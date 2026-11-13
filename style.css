@@ -238,7 +238,9 @@ button.second.bascule.actif { background: var(--accent); color: var(--sur-accent
 .calc-calcul { font-size: 13px; color: var(--gris); min-height: 18px; overflow-wrap: anywhere; }
 .calc-resultat { font-size: 28px; font-weight: 700; color: var(--encre); line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .calc-resultat.vide { color: var(--gris); }
-.calc-pave { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+/* Même disposition que l'appli (Sanji, 13/11) : 5 colonnes, la touche « = » haute de deux en bas à droite */
+.calc-pave { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.calc-touche.egal { grid-column: 5; grid-row: 3 / span 2; height: auto; font-size: 22px; }
 .calc-touche { height: 40px; padding: 0; border: 1px solid var(--ligne); border-radius: 8px; background: var(--carte); color: var(--encre);
   font-size: 18px; font-weight: 600; cursor: pointer; touch-action: manipulation; }
 .calc-touche.signe { color: var(--accent); }
@@ -262,9 +264,11 @@ button.second.bascule.actif { background: var(--accent); color: var(--sur-accent
   font-size: 20px; font-weight: 600; touch-action: manipulation; cursor: pointer; }
 .pave-touche.signe { color: var(--accent); }
 .pave-touche:active, .pave-action:active { filter: brightness(.9); }
-.pave-actions { display: flex; gap: 6px; margin-top: 6px; }
-.pave-action { flex: 1; height: 46px; border: 0; border-radius: 10px; background: var(--accent); color: var(--sur-accent);
-  font-size: 17px; font-weight: 700; touch-action: manipulation; cursor: pointer; }
+/* La colonne de validation : à droite des deux dernières rangées ; une grande touche ✓, ou deux l'une sur l'autre */
+.pave-valider { grid-column: 5; grid-row: 3 / span 2; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pave-action { flex: 1; min-height: 0; padding: 0 2px; border: 0; border-radius: 8px; background: var(--accent); color: var(--sur-accent);
+  font-size: 14px; font-weight: 700; touch-action: manipulation; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pave-action.grand { font-size: 28px; }
 .pave-action:disabled { opacity: .35; }
 body.avec-pave main { padding-bottom: calc(var(--hauteur-pave, 320px) + 16px); }
 body.avec-pave .voile { padding-bottom: var(--hauteur-pave, 320px); }
