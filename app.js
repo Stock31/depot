@@ -1171,9 +1171,10 @@ function pageStock(corps) {
     // Sanji : « en Excel, la roue crantée c'est pour ajouter des colonnes et autres réglages »
     el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'),
     // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
-    affichageStock() === 'tableau' ? el('button', { class: etat.selection ? 'principal' : 'second', style: etat.selection ? 'width:auto;margin:0' : null,
-      // Sanji, 13/11 : la case vide quand ce n'est pas utilisé, cochée une fois activé ; « Sélection multiple » plutôt que « Plusieurs »
-      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '☑ Sélection multiple' : '☐ Sélection multiple') : null,
+    // Sanji, 13/11 : « Sélection multiple » (plutôt que « Plusieurs »), puis « même chose pour Sélection multiple : un switch »
+    affichageStock() === 'tableau' ? el('label', { class: 'interrupteur' + (etat.selection ? ' allume' : '') },
+      el('input', { type: 'checkbox', role: 'switch', checked: !!etat.selection, onchange: ev => { etat.selection = ev.target.checked ? new Set() : null; principal('stock'); } }),
+      el('span', { class: 'glissiere' }), 'Sélection multiple') : null,
     // L'interrupteur « Hors stock » : allumé, la liste montre les articles hors stock ; une puce (Tous, À signaler…) l'éteint
     el('label', { class: 'interrupteur' + (etat.filtre === 'passtock' ? ' allume' : ''), title: 'Les articles qu\'on ne garde pas au dépôt' },
       el('input', { type: 'checkbox', role: 'switch', checked: etat.filtre === 'passtock', onchange: ev => { etat.filtre = ev.target.checked ? 'passtock' : 'tous'; principal('stock'); } }),
