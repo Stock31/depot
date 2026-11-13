@@ -1477,6 +1477,11 @@ function ligneTableau(t, o, cols) {
   const s = statut(t, o);
   const contenu = el('div', { class: 'detail colle' });
   const detail = el('tr', { class: 'detail-ligne', hidden: true }, el('td', { colspan: cols.length + 1 }, contenu));
+  // Le total d'une bobine ou d'une descente se déplie (retenu tant que la page est ouverte)
+  etat.deplies = etat.deplies || new Set();
+  const cleDep = t + '|' + o.id;
+  const depliable = (t === 'bobines' || t === 'descentes') && cols.some(c => c.k === 'stock');
+  let deplie = depliable && etat.deplies.has(cleDep);
   const basculer = () => {
     detail.hidden = !detail.hidden;
     if (detail.hidden) return;
@@ -1503,12 +1508,126 @@ function ligneTableau(t, o, cols) {
     // Sanji : « il faut pouvoir modifier les colonnes à la case » : même en « ☑ Plusieurs », toucher une case la modifie ;
     // c'est le nom (ou la coche) qui coche la ligne
     cols.map(c => {
+      // Bobines et descentes : le total (ml) se déplie (Sanji, 13/11) ; c'est le détail qui se modifie, pas le total
+      if (depliable && c.k === 'stock') {
+        const td = el('td', { class: (c.classe || '') + ' depliable', title: deplie ? 'Replier le détail' : 'Déplier : le détail se modifie ici' },
+          el('span', { class: 'fleche-deplier' }, deplie ? '▾' : '▸'), c.val(t, o));
+        td.addEventListener('click', ev => {
+          ev.stopPropagation();
+          if (deplie) { etat.deplies.delete(cleDep); sous.forEach(x => x.remove()); sous = []; }
+          else { etat.deplies.add(cleDep); sous = sousLignes(t, o, cols); ligne.after(...sous); }
+          deplie = !deplie;
+          td.querySelector('.fleche-deplier').textContent = deplie ? '▾' : '▸';
+          td.title = deplie ? 'Replier le détail' : 'Déplier : le détail se modifie ici';
+        });
+        return td;
+      }
       const modifiable = !!(EDITEURS[c.k] && EDITEURS[c.k](t, o));
       const td = el('td', { class: (c.classe || '') + (modifiable ? ' modifiable' : ''), title: modifiable ? 'Toucher pour modifier' : null }, c.val(t, o));
       if (modifiable) td.addEventListener('click', ev => { ev.stopPropagation(); editerCase(td, c, t, o); });
       return td;
     }));
-  return [ligne, detail];
+  let sous = deplie ? sousLignes(t, o, cols) : [];
+  return [ligne, ...sous, detail];
+}
+
+/*
+ * Sanji, 13/11 : « dans une ligne de bobine, le total en mètres linéaires déployable pour afficher le détail, modifiable à
+ * cet endroit-là de la même manière que sur l'appli ; on ne peut pas modifier le total puisque c'est un calcul ».
+ * Les lignes du dessous : une par bobine (et une « nouvelle bobine », vide, au bout), ou « Cartons » et « Descentes à
+ * l'unité ». Chaque case s'ouvre sur place comme les autres (Entrée ou toucher ailleurs : enregistré ; Échap : annulé) ;
+ * sur téléphone, le pavé : « Mètres » ou « Kg » pour une bobine. Au clavier, « 150 kg » donne les mètres aussi.
+ */
+function sousLignes(t, o, cols) {
+  const ligneSous = (libelle, cellule) => el('tr', { class: 'sous-ligne' },
+    el('td', { class: 'col1' }, el('span', { class: 'sous-libelle' }, libelle)),
+    cols.map(c => c.k === 'stock' ? cellule : el('td')));
+  if (t === 'bobines') {
+    const m = metres(o), coef = coefBobine(o);
+    return [...m.map((x, i) => ligneSous(`└ Bobine n°${i + 1}`, caseBobine(o, i, coef))),
+      ligneSous(`└ n°${m.length + 1}`, caseBobine(o, m.length, coef))];
+  }
+  const pc = num(o.par_carton);
+  return [ligneSous(`└ Cartons${pc ? ` (× ${nombreJoli(pc)})` : ''}`, caseDescente(o, 'cartons')),
+    ligneSous('└ Descentes à l\'unité', caseDescente(o, 'tuyaux'))];
+}
+
+async function ecrireComptage(t, o, champs) {
+  try { await ecrire(t, o.id, comptage(champs)); } catch (e) { alert(e.message); }
+  (etat.redessinerStock || (() => principal(etat.onglet)))();
+}
+
+function caseBobine(o, i, coef) {
+  const m = metres(o), nouvelle = i >= m.length;
+  const td = el('td', { class: 'nombre modifiable', title: 'Toucher pour modifier' + (coef ? ' (ou taper le poids suivi de « kg »)' : '') },
+    nouvelle ? el('span', { class: 'aide' }, 'nouvelle bobine') : `${nombreJoli(m[i])} ml`,
+    nouvelle ? null : el('button', { class: 'petit croix-bobine', type: 'button', title: 'Enlever cette bobine', onclick: async ev => {
+      ev.stopPropagation();
+      if (!(await confirmer(`Enlever la bobine n°${i + 1} (${nombreJoli(m[i])} ml) ?`))) return;
+      const l = m.slice(); l.splice(i, 1);
+      ecrireComptage('bobines', o, { metres: l });
+    } }, '✕'));
+  td.addEventListener('click', ev => {
+    ev.stopPropagation();
+    editerSousCase(td, nouvelle ? '' : nombreJoli(m[i]), `Bobine n°${i + 1}` + (nouvelle ? ' (nouvelle)' : ''),
+      { 'data-bobine': '1', 'data-coef': coef ?? '' },
+      v => {
+        if (!v) return null;                                  // vide : rien (pour enlever une bobine : ✕)
+        const kg = /kg\s*$/i.test(v), brut = v.replace(/kg\s*$/i, '').trim();
+        const d0 = estUnCalcul(brut) ? resultatCalcul(brut) : Number(brut.replace(',', '.'));
+        if (d0 === null || isNaN(d0)) throw new Error('Il faut un nombre de mètres (ou le poids suivi de « kg »).');
+        if (kg && !coef) throw new Error('Le poids au mètre de cette bobine n\'est pas connu : tape les mètres.');
+        const d = kg ? Math.floor(d0 / coef + 1e-9) : d0;
+        if (d <= 0) throw new Error('Une bobine à 0 n\'existe pas : pour l\'enlever, touche ✕.');
+        const l = m.slice();
+        if (nouvelle) l.push(d); else { if (l[i] === d) return null; l[i] = d; }
+        return { metres: l };
+      }, champs => ecrireComptage('bobines', o, champs));
+  });
+  return td;
+}
+
+function caseDescente(o, champ) {
+  const v = num(o[champ]), initial = v === null ? '' : nombreJoli(v);
+  const td = el('td', { class: 'nombre modifiable', title: 'Toucher pour modifier' }, v === null ? '—' : initial);
+  td.addEventListener('click', ev => {
+    ev.stopPropagation();
+    editerSousCase(td, initial, champ === 'cartons' ? 'Cartons' : 'Descentes à l\'unité', {}, x => {
+      const r = lireNombreCase(x, initial);
+      if (r.inchange || r.valeur === null) return null;
+      return { cartons: champ === 'cartons' ? r.valeur : (num(o.cartons) ?? 0), tuyaux: champ === 'tuyaux' ? r.valeur : (num(o.tuyaux) ?? 0) };
+    }, champs => ecrireComptage('descentes', o, champs));
+  });
+  return td;
+}
+
+/** Une case du détail ouverte sur place (même façon que editerCase) ; lire(texte) → champs à écrire, null = rien. */
+function editerSousCase(td, initial, titre, attributs, lire, ecrireChamps) {
+  if (td.querySelector('input')) return;
+  const champ = el('input', { type: 'text', value: initial, inputmode: 'decimal', autocomplete: 'off', spellcheck: 'false', ...attributs });
+  champ.classList.add('dans-case');
+  champ.dataset.titre = titre;
+  vider(td).append(champ);
+  td.classList.add('en-cours');
+  champ.focus();
+  if (champ.select) champ.select();
+  let fini = false;
+  const redessiner = () => (etat.redessinerStock || (() => principal(etat.onglet)))();
+  const valider = () => {
+    if (fini) return;
+    fini = true;
+    let champs;
+    try { champs = lire(champ.value.trim()); } catch (err) { alert(err.message); redessiner(); return; }
+    if (!champs) { redessiner(); return; }
+    champ.disabled = true;
+    ecrireChamps(champs);
+  };
+  champ.addEventListener('click', ev => ev.stopPropagation());
+  champ.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); valider(); }
+    else if (ev.key === 'Escape') { fini = true; redessiner(); }
+  });
+  champ.addEventListener('blur', () => valider());
 }
 
 // ------------------------------------------------------------------ cases modifiables du tableau

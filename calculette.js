@@ -150,11 +150,12 @@ function ouvrirPave(cible) {
   vider(PAVE.actions).append(...actionsPave(cible));
   PAVE.vue.classList.add('ouvert');
   document.body.classList.add('avec-pave');
+  majPave();                                         // l'écran rempli d'abord : la hauteur mesurée est la bonne
   document.documentElement.style.setProperty('--hauteur-pave', PAVE.vue.offsetHeight + 'px');
-  majPave();
   // La case reste visible au-dessus du pavé
   setTimeout(() => {
     try {
+      document.documentElement.style.setProperty('--hauteur-pave', PAVE.vue.offsetHeight + 'px');
       cible.scrollIntoView({ block: 'nearest' });
       const bas = cible.getBoundingClientRect().bottom, limite = window.innerHeight - PAVE.vue.offsetHeight - 10;
       if (bas > limite) window.scrollBy(0, bas - limite);
@@ -232,6 +233,8 @@ function validerPave(quoi) {
       c.value = nombreJoli(m);
       c.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    // Une bobine du tableau (le total déplié) : elle s'enregistre, comme avec Entrée
+    if (c.classList.contains('dans-case')) { c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return; }
     const suivante = caseSuivante(c, x => !!x.dataset.bobine);
     if (suivante && (s || c.value.trim())) suivante.focus(); else c.blur();
     return;
