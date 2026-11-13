@@ -100,26 +100,74 @@ function defaire(cur, h) {
   Object.entries(h.c || {}).forEach(([k, ch]) => { if (ch && typeof ch === 'object' && 'avant' in ch) c[k] = ch.avant; });
   return c;
 }
-/** La courbe d'un article sur [debut, fin] : [[instant, valeur]…] dans l'ordre, la valeur tenant jusqu'au point suivant. */
+/**
+ * La courbe d'un article sur [debut, fin] : [[instant, valeur, { m, p }]…] dans l'ordre, la valeur tenant jusqu'au point
+ * suivant ; m = les mètres de chaque bobine (bobines seulement), p = qui a fait le changement.
+ * Sanji, 13/11 : « une modification d'une taille, ce n'est pas un départ et une nouvelle ! » : deux saisies de la MÊME
+ * personne à moins d'une heure d'écart comptent comme une seule (une ressaisie : on garde la dernière).
+ */
+const RESSAISIE_MS = 3600000;
 function serieArticle(t, o, lignes, debut, fin) {
   let cur = { ...o };
   const pts = [];
+  const info = (c, p) => ({ m: t === 'bobines' ? metres(c) : null, p: p || null });
   let j = lignes.length - 1;
   for (; j >= 0 && Date.parse(lignes[j].q) > fin; j--) { cur = defaire(cur, lignes[j]); if (!cur) return []; }
-  pts.push([fin, valeurGraph(t, cur)]);
+  pts.push([fin, valeurGraph(t, cur), info(cur, null)]);
   for (; j >= 0; j--) {
     const q = Date.parse(lignes[j].q);
     if (q < debut) break;
-    pts.push([q, valeurGraph(t, cur)]);
+    pts.push([q, valeurGraph(t, cur), info(cur, lignes[j].p)]);
     cur = defaire(cur, lignes[j]);
     if (!cur) break;
   }
   // Avant le début de l'historique, on ne sait rien : la courbe commence là (pas de stock « stable » inventé avant)
-  if (cur && fin > DEBUT_HISTORIQUE) pts.push([Math.max(debut, DEBUT_HISTORIQUE), valeurGraph(t, cur)]);
+  if (cur && fin > DEBUT_HISTORIQUE) pts.push([Math.max(debut, DEBUT_HISTORIQUE), valeurGraph(t, cur), info(cur, null)]);
   pts.reverse();
   const net = [];
-  pts.forEach(p => { if (net.length && net[net.length - 1][0] === p[0]) net[net.length - 1] = p; else net.push(p); });
+  pts.forEach(p => {
+    const prec = net[net.length - 1];
+    if (prec && prec[0] === p[0]) net[net.length - 1] = p;
+    // Une ressaisie (même personne, moins d'une heure) : l'étape d'avant disparaît
+    else if (prec && prec[2].p && prec[2].p === p[2].p && p[0] - prec[0] <= RESSAISIE_MS && net.length > 1) net[net.length - 1] = p;
+    else net.push(p);
+  });
   return net;
+}
+
+/**
+ * Bobines : ce qui est parti et ce qui est arrivé entre deux listes de mètres (Sanji, 13/11 : « si je ne supprime pas la
+ * ligne, c'est la même bobine » ; elles sont rangées de la plus grande à la plus petite). Une bobine qui reste et
+ * raccourcit = des mètres consommés ; une qui s'allonge = une correction (ni sortie ni entrée) ; une ligne en moins = une
+ * bobine partie ; une ligne en plus = une nouvelle. Quand il y a des lignes en plus ou en moins, on choisit lesquelles
+ * pour que les autres changent le moins possible.
+ */
+function ecartsBobines(avant, apres) {
+  const A = avant.slice().sort((x, y) => y - x), B = apres.slice().sort((x, y) => y - x);
+  let sortie = 0, entree = 0;
+  const comparer = (X, Y) => X.forEach((x, i) => { if (Y[i] < x) sortie += x - Y[i]; });
+  if (A.length === B.length) { comparer(A, B); return { sortie, entree }; }
+  const [long, court] = A.length > B.length ? [A, B] : [B, A];
+  const k = long.length - court.length;
+  if (long.length > 14) {                                   // (jamais vu : on retombe sur les totaux)
+    const d = B.reduce((s, x) => s + x, 0) - A.reduce((s, x) => s + x, 0);
+    return d < 0 ? { sortie: -d, entree: 0 } : { sortie: 0, entree: d };
+  }
+  let meilleur = null;
+  const choisir = (debut, pris) => {
+    if (pris.length === k) {
+      const reste = long.filter((_, i) => !pris.includes(i));
+      const cout = reste.reduce((s, x, i) => s + Math.abs(x - court[i]), 0);
+      if (!meilleur || cout < meilleur.cout) meilleur = { cout, pris: pris.slice(), reste };
+      return;
+    }
+    for (let i = debut; i <= long.length - (k - pris.length); i++) { pris.push(i); choisir(i + 1, pris); pris.pop(); }
+  };
+  choisir(0, []);
+  const enTrop = meilleur.pris.reduce((s, i) => s + long[i], 0);
+  if (A.length > B.length) { sortie += enTrop; comparer(meilleur.reste, B); }
+  else { entree += enTrop; comparer(A, meilleur.reste); }
+  return { sortie, entree };
 }
 /** La valeur d'une courbe à un instant (le dernier point avant lui). */
 function valeurA(pts, t) {
@@ -132,8 +180,15 @@ function variations(pts) {
   const l = [];
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1][1], b = pts[i][1];
-    if (a === null || b === null || a === b) continue;
-    l.push([pts[i][0], b - a]);
+    if (a === null || b === null) continue;
+    const ma = pts[i - 1][2] && pts[i - 1][2].m, mb = pts[i][2] && pts[i][2].m;
+    if (ma && mb) {                                         // bobines : bobine par bobine
+      const { sortie, entree } = ecartsBobines(ma, mb);
+      if (sortie > 0) l.push([pts[i][0], -sortie]);
+      if (entree > 0) l.push([pts[i][0], entree]);
+      continue;
+    }
+    if (a !== b) l.push([pts[i][0], b - a]);
   }
   return l;
 }

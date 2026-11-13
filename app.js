@@ -154,7 +154,15 @@ async function chargerTout() {
   etat.charge = new Date();
 }
 
+/** Sanji, 13/11 : les bobines rangées de la plus grande à la plus petite, chaque fois que leur liste est enregistrée. */
+function rangerBobines(table, champs) {
+  if (table === 'bobines' && champs && Array.isArray(champs.metres))
+    champs.metres = champs.metres.map(Number).filter(x => !isNaN(x)).sort((a, b) => b - a);
+  return champs;
+}
+
 async function ecrire(table, id, champs) {
+  rangerBobines(table, champs);
   const r = await rpc('appliquer_modifications', {
     modifs: [{ table, id, champs, ts: new Date().toISOString(), par: etat.identifiant, appareil: APP.id }],
     p_jeton: APP.jeton,
@@ -172,6 +180,7 @@ async function ecrire(table, id, champs) {
 /** Plusieurs écritures d'un coup (un départ ou un retour de déploiement : les articles et le déploiement ensemble). */
 async function ecrireLot(lot) {
   if (!lot.length) return;
+  lot.forEach(x => rangerBobines(x.table, x.champs));
   const ts = new Date().toISOString();
   const r = await rpc('appliquer_modifications', {
     modifs: lot.map(x => ({ table: x.table, id: x.id, champs: x.champs, ts, par: etat.identifiant, appareil: APP.id })),
