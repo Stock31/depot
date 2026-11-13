@@ -36,6 +36,8 @@ function el(tag, props, ...enfants) {
     if (c === null || c === undefined || c === false) continue;
     e.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
+  // Une case de nombre : sur téléphone, le pavé du site à la place du clavier (calculette.js, Sanji 13/11)
+  if (tag === 'input' && e.getAttribute('inputmode') === 'decimal' && typeof preparerCaseNombre === 'function') preparerCaseNombre(e);
   return e;
 }
 function vider(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
@@ -203,6 +205,10 @@ async function ecrireLot(lot) {
 
 const tous = t => (etat.donnees[t] || []).filter(o => !o.supprime);
 function reglage(id) { const r = (etat.donnees.reglages || []).find(x => x.id === id && !x.supprime); return r ? r.valeur : null; }
+/** Poids au mètre d'une bobine (kg ÷ ce nombre = mètres), selon sa largeur (300, 380…) ; null si inconnu (comme l'appli). */
+function coefBobine(o) { const m = /\d{3}/.exec(o.groupe || ''); const c = reglage('coef_bobines'); return m && c && typeof c === 'object' ? num(c[m[0]]) : null; }
+/** Descentes : « descentes » (à l'unité ; le champ du document reste « tuyaux ») ou « cartons » (Sanji, 13/11). */
+function uniteDescente(u) { return (u || 'tuyaux') === 'tuyaux' ? 'descentes' : 'cartons'; }
 function niveaux() {
   const r = reglage('niveaux');
   const l = Array.isArray(r) ? r.filter(o => o && o.valeur).map(o => [o.valeur, o.libelle || o.valeur]) : [];
@@ -278,7 +284,7 @@ function resume(tab, o) {
   }
   if (tab === 'descentes') {
     const tot = metresDescente(o);
-    return tot === null ? null : `${nombreJoli(num(o.cartons) ?? 0)} carton(s) + ${nombreJoli(num(o.tuyaux) ?? 0)} tuyau(x) = ${nombreJoli(tot)} ml`;
+    return tot === null ? null : `${nombreJoli(num(o.cartons) ?? 0)} carton(s) + ${nombreJoli(num(o.tuyaux) ?? 0)} descente(s) = ${nombreJoli(tot)} ml`;
   }
   const q = num(o.quantite), niv = o.niveau;
   switch (o.mode || 'quantite') {
@@ -877,7 +883,7 @@ function celluleBobines(o) {
  * (tout le stock, par pages de 100, filtres par type et par personne). Les mêmes phrases que le 🕘 de l'appli (Edition.kt). */
 const CASES_HISTO = { nom: 'Nom', nom_court: 'Nom court', ref: 'Référence', zone: 'Emplacement', famille: 'Famille',
   fournisseur: 'Fournisseur', mode: 'Façon de compter', unite: 'Unité', seuil: 'Seuil', signaler: 'Alerte', note: 'Note',
-  couleur: 'Couleur', suivi: 'En stock', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Tuyaux' };
+  couleur: 'Couleur', suivi: 'En stock', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Descentes (unité)' };
 const IGNOREES_HISTO = new Set(['compte', 'compte_par', 'compte_appareil', 'ordre', 'g_ordre', 'alerte_vue_par', 'horodatages',
   'maj', 'maj_par', 'maj_appareil', 'maj_serveur', 'cree_le', 'stock_max']);
 const COMPTES_HISTO = ['quantite', 'niveau', 'metres', 'cartons', 'tuyaux'];
@@ -1536,8 +1542,9 @@ function lireNombreCase(v, initial) {
   const t = v.trim();
   if (t === initial) return { inchange: true };
   if (!t) return { valeur: null };
-  const d = Number(t.replace(',', '.'));
-  if (isNaN(d) || d < 0) throw new Error('Il faut un nombre (0 ou plus).');
+  // Un calcul tapé (3*24+7, ou au pavé) est accepté : c'est son résultat qui compte (calculette.js)
+  const d = estUnCalcul(t) ? resultatCalcul(t) : Number(t.replace(',', '.'));
+  if (d === null || isNaN(d) || d < 0) throw new Error('Il faut un nombre (0 ou plus).');
   return { valeur: d };
 }
 function caseNombre(o, k) {
@@ -1608,17 +1615,56 @@ function fenetreCompter(t, o) {
   let lire;
   const corps = [];
   if (t === 'bobines') {
-    const m = champTexte(metres(o).map(nombreJoli).join(' + '), 'ex. 80 + 42,5');
-    corps.push(el('label', {}, 'Bobines au dépôt (mètres de chacune, séparés par +)'), m,
-      el('p', { class: 'aide' }, 'Vide = plus aucune bobine. Les bobines sorties chez un ouvrier ne sont pas comptées ici.'));
+    // Comme dans l'appli (Sanji, 13/11) : une case par bobine, et toujours une case vide au bout (« une bobine où il n'y a
+    // rien d'écrit n'existe pas, elle est juste là pour pouvoir la remplir ») ; sur téléphone, le pavé : Mètres ou Kg
+    const coef = coefBobine(o);
+    const liste = el('div', { class: 'liste-bobines' });
+    const totalVue = el('p', { class: 'aide' });
+    const cases = () => [...liste.querySelectorAll('input')];
+    const lireCase = i => { const v = i.value.trim(); return v ? (estUnCalcul(v) ? resultatCalcul(v) : Number(v.replace(',', '.'))) : null; };
+    const maj = () => {
+      const l = cases().map(lireCase).filter(x => x !== null && !isNaN(x) && x > 0);
+      totalVue.textContent = `${l.length} bobine${l.length > 1 ? 's' : ''} · ${nombreJoli(l.reduce((a, b) => a + b, 0))} ml`;
+      [...liste.children].forEach((ligne, k, tout) => {
+        ligne.querySelector('.num-bobine').textContent = `n°${k + 1}`;
+        ligne.querySelector('input').dataset.titre = `Bobine n°${k + 1}` + (k === tout.length - 1 && !ligne.querySelector('input').value.trim() ? ' (nouvelle)' : '');
+        ligne.querySelector('button').style.visibility = k === tout.length - 1 && !ligne.querySelector('input').value.trim() ? 'hidden' : '';
+      });
+    };
+    // Toujours une, et une seule, case vide au bout
+    const assurerVide = () => {
+      let c = cases();
+      while (c.length >= 2 && !c[c.length - 1].value.trim() && !c[c.length - 2].value.trim() && document.activeElement !== c[c.length - 1]) {
+        c[c.length - 1].closest('.ligne-bobine').remove(); c = cases();
+      }
+      if (!c.length || c[c.length - 1].value.trim()) ajouterCase(null);
+    };
+    function ajouterCase(v) {
+      const i = el('input', { type: 'text', inputmode: 'decimal', value: v === null ? '' : nombreJoli(v), placeholder: 'nouvelle bobine (mètres)',
+        'data-bobine': '1', 'data-coef': coef ?? '', autocomplete: 'off' });
+      const ligne = el('div', { class: 'ligne-bobine' }, el('span', { class: 'num-bobine' }),
+        i, el('button', { class: 'petit', type: 'button', title: 'Enlever cette bobine', onclick: () => { ligne.remove(); assurerVide(); maj(); } }, '✕'));
+      i.addEventListener('input', () => { assurerVide(); maj(); });
+      // Au clavier (ordinateur) : Entrée passe à la bobine suivante
+      i.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); const c = cases(); const s = c[c.indexOf(i) + 1]; if (s) s.focus(); } });
+      liste.append(ligne);
+    }
+    metres(o).slice().sort((a, b) => b - a).forEach(ajouterCase);
+    assurerVide(); maj();
+    corps.push(el('label', {}, 'Bobines au dépôt : les mètres de chacune' + (coef ? ` (au pavé, Kg : mètres = kg ÷ ${nombreJoli(coef)})` : '')),
+      liste, totalVue,
+      el('p', { class: 'aide' }, 'Une case vide n\'est pas une bobine. Les bobines sorties chez un ouvrier ne sont pas comptées ici.'));
     lire = () => {
-      const l = m.value.split('+').map(x => x.trim()).filter(Boolean).map(x => Number(x.replace(',', '.')));
-      if (l.some(x => isNaN(x) || x <= 0)) throw new Error('Écris les mètres de chaque bobine, séparés par + (ex. 80 + 42,5).');
+      const l = cases().filter(i => i.value.trim()).map(lireCase);
+      if (l.some(x => x === null || isNaN(x) || x <= 0)) throw new Error('Écris les mètres de chaque bobine (un nombre plus grand que 0).');
       return { metres: l };
     };
   } else if (t === 'descentes') {
-    const c = champTexte(nb(o.cartons), 'cartons'), tu = champTexte(nb(o.tuyaux), 'tuyaux en vrac');
-    corps.push(el('label', {}, 'Cartons'), c, el('label', {}, 'Tuyaux (hors cartons)'), tu);
+    // Sur téléphone, le pavé : « Carton » ou « Descente » (Sanji, 13/11)
+    const c = champTexte(nb(o.cartons), 'cartons'), tu = champTexte(nb(o.tuyaux), 'descentes à l\'unité');
+    c.dataset.descente = 'cartons'; c.dataset.titre = 'Cartons ou descentes ?';
+    tu.dataset.descente = 'tuyaux'; tu.dataset.titre = 'Cartons ou descentes ?';
+    corps.push(el('label', {}, 'Cartons'), c, el('label', {}, 'Descentes (hors cartons)'), tu);
     lire = () => ({ cartons: lireNombreCase(c.value, '').valeur ?? 0, tuyaux: lireNombreCase(tu.value, '').valeur ?? 0 });
   } else {
     const c = champTexte(nb(o.quantite), 'cartons fermés');
@@ -1729,6 +1775,7 @@ function editerCase(td, c, t, o0) {
     : el('input', { type: 'text', value: e.valeur ?? '', inputmode: e.type === 'nombre' ? 'decimal' : null,
         autocapitalize: e.majuscules ? 'characters' : null, autocomplete: 'off', spellcheck: 'false' });
   champ.classList.add('dans-case');
+  champ.dataset.titre = `${c.titre || ''} · ${o.nom_court || o.nom || o.ref}`;    // le titre du pavé, sur téléphone
   vider(td).append(champ);
   td.classList.add('en-cours');
   champ.focus();
@@ -1809,7 +1856,7 @@ function pageSignaler(corps) {
 
 const kitsActifs = () => tous('kits');
 function nomKit(k) { return (k.client && k.client.trim()) || (k.libelle && k.libelle.trim()) || `Kit du ${jour(k.cree_le || k.maj)}`; }
-function uniteLigne(t, o, u) { return t === 'bobines' ? 'bobine(s)' : t === 'descentes' ? (u || 'tuyaux') : (o && o.mode === 'mixte' ? 'carton(s) fermé(s)' : (o && o.unite) || 'pièce(s)'); }
+function uniteLigne(t, o, u) { return t === 'bobines' ? 'bobine(s)' : t === 'descentes' ? uniteDescente(u) : (o && o.mode === 'mixte' ? 'carton(s) fermé(s)' : (o && o.unite) || 'pièce(s)'); }
 
 /** L'onglet Kits (Sanji, 11/11) : « choisir entre Kit vente et Kit déploiement, même lieu de départ, mais ce sont des sous-menus ». */
 function pageKits(corps) {
@@ -1872,7 +1919,7 @@ function nouvelIdDep() {
 }
 const somme = l => l.reduce((a, x) => a + (Number(x) || 0), 0);
 /** Ce qui est parti, en clair (pour un élément de « preleve »). */
-function unitePrise(p, o) { return p.t === 'bobines' ? 'ml' : p.t === 'descentes' ? (p.champ || 'tuyaux') : uniteLigne(p.t, o, null); }
+function unitePrise(p, o) { return p.t === 'bobines' ? 'ml' : p.t === 'descentes' ? uniteDescente(p.champ) : uniteLigne(p.t, o, null); }
 function prisN(p) { return p.t === 'bobines' ? somme(p.metres || []) : (num(p.voulu) ?? num(p.n) ?? 0); }
 function revenuN(p, r) { if (!r) return 0; return p.t === 'bobines' ? somme(r.metres || []) : (num(r.n) ?? 0); }
 function textePris(p, o) {
@@ -2059,7 +2106,7 @@ function editeurDepart(dExistant, options) {
         el('div', { class: 'etire' }, el('div', { class: 'nom' }, (o && (o.nom_court || o.nom)) || l.id),
           el('div', { class: 'ref' }, `${(o && o.ref) || ''} · en stock : ${(o && resume(l.t, o)) || 'pas compté'}${bob}`)),
         el('button', { class: 'petit', onclick: () => changer(-1) }, '−'), nVue, el('button', { class: 'petit', onclick: () => changer(1) }, '+'),
-        l.t === 'descentes' ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, l.u || 'tuyaux')
+        l.t === 'descentes' ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, uniteDescente(l.u))
           : el('span', { class: 'aide' }, uniteLigne(l.t, o, l.u)),
         el('button', { class: 'petit danger', onclick: () => { brouillon.lignes.splice(i, 1); dessiner(); } }, '✕')));
     });
@@ -2293,7 +2340,7 @@ async function appliquerRetour(d0, valeurs, supprimer, remettrePrevu) {
       return;
     }
     const n = Number(v) || 0;
-    Object.assign(mvt, { n, unite: p.t === 'descentes' ? (p.champ || 'tuyaux') : uniteLigne(p.t, o, null) });
+    Object.assign(mvt, { n, unite: p.t === 'descentes' ? uniteDescente(p.champ) : uniteLigne(p.t, o, null) });
     if (p.trace || p.inconnu) {
       if (n > 0) a.champs.mouvement = { ...mvt, ...(p.trace ? { niveau_inchange: true } : {}) };
       retour.push({ t: p.t, id: p.id, trace: true, n });
@@ -2395,7 +2442,7 @@ function editeurKit(k0) {
           l.n = avant + 1;
           verifierManque(l, o, () => { l.n = avant; }, dessiner);
         } }, '+'),
-        l.t === 'descentes' && !pret ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, l.u || 'tuyaux')
+        l.t === 'descentes' && !pret ? el('button', { class: 'petit', onclick: () => { l.u = (l.u || 'tuyaux') === 'tuyaux' ? 'cartons' : 'tuyaux'; dessiner(); } }, uniteDescente(l.u))
           : el('span', { class: 'aide' }, uniteLigne(l.t, o, l.u)),
         pret ? null : el('button', { class: 'petit danger', onclick: () => { brouillon.lignes.splice(i, 1); dessiner(); } }, '✕')));
     });

@@ -84,8 +84,175 @@ const CALCULETTE = { vue: null, saisie: '' };
 /** La case de nombre en cours (tableau, barre « Sélection multiple », fenêtres), s'il y en a une. */
 function caseNombreActive() {
   const a = document.activeElement;
-  return a && a.tagName === 'INPUT' && a.getAttribute('inputmode') === 'decimal' && !(CALCULETTE.vue && CALCULETTE.vue.contains(a)) ? a : null;
+  const nombre = a && a.tagName === 'INPUT' && (a.getAttribute('inputmode') === 'decimal' || a.dataset.pave);
+  return nombre && !(CALCULETTE.vue && CALCULETTE.vue.contains(a)) ? a : null;
 }
+
+// ------------------------------------------------------------------ le pavé du bas, sur téléphone
+
+/*
+ * Sanji, 13/11 : « jamais de clavier du téléphone pour les nombres, nulle part (sauf là où il faut des lettres) » ;
+ * « comme un clavier de téléphone : il reste à sa place en bas » ; le site sur téléphone fait comme l'appli.
+ * Sur un écran tactile sans souris, chaque case de nombre (créée par el() avec inputmode « decimal ») est préparée :
+ * le clavier du téléphone ne s'ouvre pas, c'est ce pavé qui monte. Les touches d'action dépendent de la case :
+ * « OK » d'office ; « Mètres » / « Kg » pour une bobine ; « Carton » / « Descente » pour les descentes.
+ * Sur un ordinateur, rien ne change (on tape au clavier ; un calcul tapé est accepté aussi).
+ */
+const SAISIE_TACTILE = (() => { try { return matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches; } catch (e) { return false; } })();
+
+/** Appelée par el() pour chaque case de nombre. */
+function preparerCaseNombre(input) {
+  if (!SAISIE_TACTILE) return;
+  input.setAttribute('inputmode', 'none');
+  input.readOnly = true;                      // aucun clavier du téléphone, même là où « inputmode » n'est pas compris
+  input.dataset.pave = '1';
+}
+
+const PAVE = { vue: null, cible: null, saisie: '', remplacer: false, ecranCalcul: null, ecranResultat: null, ecranTitre: null, ecranDetail: null, actions: null };
+
+function construirePave() {
+  const garder = ev => ev.preventDefault();           // toucher le pavé ne fait pas quitter la case
+  const touche = k => el('button', { class: 'pave-touche' + ('÷×−+()=,'.includes(k) ? ' signe' : ''), tabindex: '-1', type: 'button',
+    onclick: () => appuyerPave(k) }, k);
+  PAVE.ecranTitre = el('div', { class: 'pave-titre' });
+  PAVE.ecranCalcul = el('div', { class: 'calc-calcul' });
+  PAVE.ecranResultat = el('div', { class: 'calc-resultat' });
+  PAVE.ecranDetail = el('div', { class: 'pave-detail' });
+  PAVE.actions = el('div', { class: 'pave-actions' });
+  PAVE.vue = el('div', { class: 'pave', role: 'group', 'aria-label': 'Pavé de nombres' },
+    el('div', { class: 'pave-ecran' }, PAVE.ecranTitre, el('div', { class: 'pave-droite' }, PAVE.ecranCalcul, PAVE.ecranResultat, PAVE.ecranDetail)),
+    el('div', { class: 'pave-touches' },
+      ['7', '8', '9', '÷', '(', '4', '5', '6', '×', ')', '1', '2', '3', '−', ',', 'C', '0', '⌫', '+', '='].map(touche)),
+    PAVE.actions);
+  PAVE.vue.addEventListener('mousedown', garder);
+  PAVE.vue.addEventListener('pointerdown', garder);
+  document.body.append(PAVE.vue);
+}
+
+/** Les touches d'action selon la case : bobine, descentes, ou « OK ». */
+function actionsPave(cible) {
+  const bouton = (lib, faire, actif = true) => el('button', { class: 'pave-action', type: 'button', tabindex: '-1', disabled: !actif, onclick: faire }, lib);
+  if (cible.dataset.bobine) {
+    const coef = num(cible.dataset.coef);
+    return [bouton('Mètres', () => validerPave('m')), bouton('Kg', () => validerPave('kg'), coef !== null && coef > 0)];
+  }
+  if (cible.dataset.descente) return [bouton('Carton', () => validerPave('cartons')), bouton('Descente', () => validerPave('tuyaux'))];
+  return [bouton('OK', () => validerPave('ok'))];
+}
+
+function ouvrirPave(cible) {
+  if (!PAVE.vue) construirePave();
+  PAVE.cible = cible;
+  PAVE.saisie = String(cible.value || '').trim().replace(/\./g, ',');
+  PAVE.remplacer = PAVE.saisie !== '';               // un chiffre remplace la valeur, un signe la continue (120 − 30)
+  const etiquette = cible.id && document.querySelector(`label[for="${cible.id}"]`);
+  PAVE.ecranTitre.textContent = cible.dataset.titre || (etiquette && etiquette.textContent) || cible.placeholder || 'Nombre';
+  vider(PAVE.actions).append(...actionsPave(cible));
+  PAVE.vue.classList.add('ouvert');
+  document.body.classList.add('avec-pave');
+  document.documentElement.style.setProperty('--hauteur-pave', PAVE.vue.offsetHeight + 'px');
+  majPave();
+  // La case reste visible au-dessus du pavé
+  setTimeout(() => {
+    try {
+      cible.scrollIntoView({ block: 'nearest' });
+      const bas = cible.getBoundingClientRect().bottom, limite = window.innerHeight - PAVE.vue.offsetHeight - 10;
+      if (bas > limite) window.scrollBy(0, bas - limite);
+    } catch (e) { /* rien */ }
+  }, 50);
+}
+
+function fermerPave() {
+  if (!PAVE.vue) return;
+  PAVE.vue.classList.remove('ouvert');
+  document.body.classList.remove('avec-pave');
+  PAVE.cible = null;
+}
+
+function appuyerPave(k) {
+  if (!PAVE.cible) return;
+  if (PAVE.remplacer && !['⌫', 'C', '=', '+', '−', '×', '÷'].includes(k)) PAVE.saisie = '';
+  PAVE.remplacer = false;
+  PAVE.saisie = toucheCalcul(PAVE.saisie, k);
+  // Le résultat va tout de suite dans la case (toucher ailleurs l'enregistre, comme au clavier) ; un calcul impossible
+  // ne la change pas
+  // (pas pour les descentes : c'est « Carton » ou « Descente » qui dit dans quelle case va le nombre)
+  const r = PAVE.saisie ? resultatCalcul(PAVE.saisie) : null;
+  if (!PAVE.cible.dataset.descente) {
+    if (!PAVE.saisie) PAVE.cible.value = '';
+    else if (r !== null) PAVE.cible.value = nombreJoli(r);
+    PAVE.cible.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  majPave();
+}
+
+function majPave() {
+  const s = PAVE.saisie, calcul = estUnCalcul(s), r = s ? resultatCalcul(s) : null;
+  PAVE.ecranCalcul.textContent = calcul ? `${affichageCalcul(s)} =` : ' ';
+  PAVE.ecranResultat.textContent = !s ? '—' : calcul ? (r === null ? '?' : nombreJoli(r)) : s;
+  PAVE.ecranResultat.classList.toggle('vide', !s);
+  const coef = PAVE.cible && PAVE.cible.dataset.bobine ? num(PAVE.cible.dataset.coef) : null;
+  PAVE.ecranDetail.textContent = calcul && r === null ? 'calcul impossible'
+    : (r !== null && coef ? `en Kg : ${nombreJoli(Math.floor(r / coef + 1e-9))} ml` : '');
+}
+
+/** Les cases à pavé qui suivent celle-ci, dans le même cadre (fenêtre ou page). */
+function caseSuivante(cible, filtre) {
+  const cadre = cible.closest('.fenetre, .barre-lot, main') || document;
+  const toutes = [...cadre.querySelectorAll('input[data-pave]')].filter(filtre || (() => true));
+  const i = toutes.indexOf(cible);
+  return i >= 0 ? toutes[i + 1] || null : null;
+}
+
+function validerPave(quoi) {
+  const c = PAVE.cible; if (!c) return;
+  const s = PAVE.saisie, r = s ? resultatCalcul(s) : null;
+  if (s && r === null) { PAVE.ecranDetail.textContent = 'calcul impossible : vérifie-le'; return; }
+  if (r !== null && r < 0) { PAVE.ecranDetail.textContent = 'le résultat est négatif'; return; }
+  if (quoi === 'cartons' || quoi === 'tuyaux') {
+    // Descentes : le nombre va dans « Cartons » ou « Descentes », quelle que soit la case touchée
+    const cadre = c.closest('.fenetre') || document;
+    const dest = cadre.querySelector(`input[data-descente="${quoi}"]`) || c;
+    if (s) { dest.value = nombreJoli(r); dest.dataset.avant = dest.value; dest.dispatchEvent(new Event('input', { bubbles: true })); }
+    PAVE.saisie = ''; PAVE.remplacer = false;
+    if (dest !== c) dest.focus(); else majPave();
+    return;
+  }
+  if (quoi === 'm' || quoi === 'kg') {
+    // Bobines : la longueur, ou le poids converti en mètres ; puis la bobine suivante
+    if (s) {
+      const coef = num(c.dataset.coef);
+      const m = quoi === 'kg' && coef ? Math.floor(r / coef + 1e-9) : r;
+      if (m <= 0) {
+        c.value = c.dataset.avant || ''; c.dispatchEvent(new Event('input', { bubbles: true }));
+        PAVE.saisie = ''; majPave();
+        PAVE.ecranDetail.textContent = 'une bobine à 0 n\'existe pas : touche ✕ pour l\'enlever';
+        return;
+      }
+      c.value = nombreJoli(m);
+      c.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const suivante = caseSuivante(c, x => !!x.dataset.bobine);
+    if (suivante && (s || c.value.trim())) suivante.focus(); else c.blur();
+    return;
+  }
+  // « OK » : la case prend le résultat ; une case du tableau s'enregistre (comme Entrée) ; sinon la case suivante
+  if (s) c.value = nombreJoli(r);
+  c.dispatchEvent(new Event('input', { bubbles: true }));
+  if (c.classList.contains('dans-case')) { c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return; }
+  const suivante = caseSuivante(c);
+  if (suivante) suivante.focus(); else c.blur();
+}
+
+// La case touchée appelle le pavé ; il se range quand on quitte les cases de nombres
+document.addEventListener('focusin', ev => {
+  const c = ev.target;
+  if (c && c.tagName === 'INPUT' && c.dataset.pave) { c.dataset.avant = c.value; ouvrirPave(c); }
+});
+document.addEventListener('focusout', () => setTimeout(() => {
+  const a = document.activeElement;
+  if (!(a && a.tagName === 'INPUT' && a.dataset.pave)) fermerPave();
+}, 0));
 
 function majBoutonsCalculette() {
   const ouverte = !!CALCULETTE.vue;
