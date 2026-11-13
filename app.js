@@ -223,7 +223,7 @@ const sorties = o => Array.isArray(o.sorties) ? o.sorties : [];
 function statut(tab, o) {
   if (o.supprime) return 'CORBEILLE';
   if (o.manque) return 'MANQUE';          // il a manqué pour un kit : rouge vif, avant tout le reste
-  if (tab === 'accessoires' && o.suivi === false) return 'DECIDER';
+  if (o.suivi === false) return 'DECIDER';              // « Pas stocké » (Sanji, 13/11 : on n'en a pas et on n'en veut pas)
   const seuil = seuilDe(o);
   let alerte = null;
   if (tab === 'bobines') { const m = metres(o); alerte = (m.length === 0 && !o.compte) ? null : !m.some(x => x >= seuil); }
@@ -240,7 +240,7 @@ function statut(tab, o) {
   if (o.signaler === false) return 'OK';
   return o.alerte_vue ? 'VUE' : 'SIGNALER';
 }
-const LIBELLES = { MANQUE: 'Manque !', SIGNALER: 'À signaler', VUE: 'Vu', COMPTER: 'À compter', OK: 'OK', DECIDER: 'À décider', CORBEILLE: 'Corbeille' };
+const LIBELLES = { MANQUE: 'Manque !', SIGNALER: 'À signaler', VUE: 'Vu', COMPTER: 'À compter', OK: 'OK', DECIDER: 'Pas stocké', CORBEILLE: 'Corbeille' };
 const enAlerte = s => s === 'MANQUE' || s === 'SIGNALER' || s === 'VUE';
 
 /** Ce qu'on peut prendre maintenant (null = on ne sait pas : compté au niveau, ou jamais compté). */
@@ -324,11 +324,11 @@ function arbreZones() {
   return entrepots.map(ent => ({ entrepot: ent, enfants: enfants(null, ent).map(z => noeud(z, ent)) }));
 }
 
-/** Les articles d'un rayon, dans l'ordre du dépôt. */
-function articlesDuRayon(code) {
+/** Les articles d'un rayon, dans l'ordre du dépôt (pasStockes : seulement ceux cochés « Pas stocké », sinon sans eux). */
+function articlesDuRayon(code, pasStockes) {
   const res = [];
   for (const t of ARTICLES) {
-    tous(t).filter(o => o.zone === code && (t !== 'accessoires' || o.suivi !== false))
+    tous(t).filter(o => o.zone === code && (o.suivi === false) === !!pasStockes)
       .sort((a, b) => (num(a.g_ordre) ?? 1e9) - (num(b.g_ordre) ?? 1e9) || (num(a.ordre) ?? 1e9) - (num(b.ordre) ?? 1e9) || (a.nom || '').localeCompare(b.nom || ''))
       .forEach(o => res.push({ t, o }));
   }
@@ -714,6 +714,8 @@ function editeurArticle(t, o0) {
   }
   majMode();
   const signaler = el('input', { type: 'checkbox', checked: o.signaler !== false });
+  // Sanji, 13/11 : « on n'en a pas et on n'en veut pas » : l'article reste (réf gardée) mais sort du stock et des routines
+  const pasStocke = el('input', { type: 'checkbox', checked: o.suivi === false });
   const note = el('textarea', { placeholder: 'facultatif' }, o.note || '');
   const msg = el('p', { class: 'erreur' });
 
@@ -738,7 +740,7 @@ function editeurArticle(t, o0) {
     if (!pcOk) { msg.textContent = 'La contenance doit être un nombre.'; return; }
 
     const valeurs = { nom: n, nom_court: net(nomCourt.value), ref: r, zone: zone.value, fournisseur: fournisseur.value || null,
-      signaler: signaler.checked, note: net(note.value) };
+      signaler: signaler.checked, note: net(note.value), suivi: !pasStocke.checked };
     valeurs.couleur = net(couleur.value);
     if (t === 'accessoires') {
       valeurs.dimension = net(dimension.value);
@@ -753,7 +755,6 @@ function editeurArticle(t, o0) {
     if (neuf) {
       // Article neuf : identifiant = référence (règle du document) ; il apparaît « à compter »
       const champsN = { ...valeurs, supprime: false };
-      if (t === 'accessoires') champsN.suivi = true;
       if (t === 'bobines') champsN.metres = [];
       if (t !== 'accessoires') { champsN.g_ordre = gOrdre(t, g); champsN.ordre = ordreSuivant(t, g); }
       bouton.disabled = true;
@@ -766,7 +767,7 @@ function editeurArticle(t, o0) {
       return;
     }
     // Une case absente vaut sa valeur par défaut (alerte : oui ; façon de compter : quantité) : pas d'écriture inutile
-    const ancienne = k => k === 'signaler' ? o.signaler !== false : k === 'mode' ? (o.mode || 'quantite') : o[k];
+    const ancienne = k => k === 'signaler' ? o.signaler !== false : k === 'suivi' ? o.suivi !== false : k === 'mode' ? (o.mode || 'quantite') : o[k];
     const champs = {};
     Object.entries(valeurs).forEach(([k, v]) => { if (!pareil(ancienne(k), v)) champs[k] = v; });
     // Largeur ou diamètre changé : on le range à la fin de son nouveau groupe
@@ -805,6 +806,8 @@ function editeurArticle(t, o0) {
     t === 'descentes' ? [el('label', {}, 'Tuyaux par carton'), parCarton] : null,
     blocSeuil,
     el('label', { class: 'case' }, signaler, 'Prévenir quand il en manque (À signaler)'),
+    el('label', { class: 'case' }, pasStocke, 'Pas stocké : on n\'en a pas et on n\'en veut pas'),
+    el('p', { class: 'aide', style: 'margin-top:-4px' }, 'L\'article reste (sa référence aussi), mais il sort du stock, des alertes, des routines et des stats. On le retrouve avec le filtre « Pas stockés ».'),
     el('label', {}, 'Note'), note,
     neuf ? null : el('p', { class: 'aide', style: 'margin-top:12px' }, `Dernier changement : ${o.maj_par || '?'}${o.maj ? ' le ' + jour(o.maj) : ''}`),
     msg,
@@ -873,8 +876,8 @@ function celluleBobines(o) {
  * (tout le stock, par pages de 100, filtres par type et par personne). Les mêmes phrases que le 🕘 de l'appli (Edition.kt). */
 const CASES_HISTO = { nom: 'Nom', nom_court: 'Nom court', ref: 'Référence', zone: 'Emplacement', famille: 'Famille',
   fournisseur: 'Fournisseur', mode: 'Façon de compter', unite: 'Unité', seuil: 'Seuil', signaler: 'Alerte', note: 'Note',
-  couleur: 'Couleur', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Tuyaux' };
-const IGNOREES_HISTO = new Set(['compte', 'compte_par', 'compte_appareil', 'ordre', 'g_ordre', 'suivi', 'alerte_vue_par', 'horodatages',
+  couleur: 'Couleur', suivi: 'Stocké', quantite: 'Quantité', niveau: 'Niveau', metres: 'Mètres', cartons: 'Cartons', tuyaux: 'Tuyaux' };
+const IGNOREES_HISTO = new Set(['compte', 'compte_par', 'compte_appareil', 'ordre', 'g_ordre', 'alerte_vue_par', 'horodatages',
   'maj', 'maj_par', 'maj_appareil', 'maj_serveur', 'cree_le', 'stock_max']);
 const COMPTES_HISTO = ['quantite', 'niveau', 'metres', 'cartons', 'tuyaux'];
 const fmtJourLong = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -1065,8 +1068,11 @@ function pageStock(corps) {
   const champ = el('input', { type: 'search', placeholder: 'Chercher un article, une réf, une couleur', value: etat.recherche });
   const puces = el('div', { class: 'puces' });
   const liste = el('div');
-  const tousArticles = ARTICLES.flatMap(t => tous(t).filter(o => t !== 'accessoires' || o.suivi !== false).map(o => ({ t, o, s: statut(t, o) })));
+  const tousArticles = ARTICLES.flatMap(t => tous(t).filter(o => o.suivi !== false).map(o => ({ t, o, s: statut(t, o) })));
+  // Sanji, 13/11 : « Pas stocké » (on n'en a pas et on n'en veut pas) : hors du stock et des routines, mais retrouvable ici
+  const nPasStockes = ARTICLES.reduce((n, t) => n + tous(t).filter(o => o.suivi === false).length, 0);
   const filtres = [['tous', 'Tous', tousArticles.length], ['signaler', 'À signaler', tousArticles.filter(x => enAlerte(x.s)).length], ['compter', 'À compter', tousArticles.filter(x => x.s === 'COMPTER').length]];
+  if (nPasStockes || etat.filtre === 'passtock') filtres.push(['passtock', 'Pas stockés', nPasStockes]);
   function dessinerPuces() {
     vider(puces).append(...filtres.map(([k, lib, n]) => el('button', { class: k === etat.filtre ? 'actif' : '', onclick: () => { etat.filtre = k; dessinerPuces(); dessiner(); } }, `${lib}  ${n}`)));
   }
@@ -1107,7 +1113,7 @@ function pageStock(corps) {
     let articles = [];
     const sous = [];
     if (n.enfants.length) n.enfants.forEach(x => { const r = dossierZone(x, null); if (r) { sous.push(r.vue); articles = articles.concat(r.articles); } });
-    else articles = articlesDuRayon(z.id).filter(x => garde(x.t, x.o));
+    else articles = articlesDuRayon(z.id, etat.filtre === 'passtock').filter(x => garde(x.t, x.o));
     if (!articles.length) return null;
     const nAlerte = articles.filter(x => enAlerte(statut(x.t, x.o))).length;
     const cle = 'z:' + z.id;
@@ -1208,6 +1214,7 @@ const COLONNES_TOUTES = [
   { k: 'unite', titre: 'Unité', val: (t, o) => t !== 'accessoires' ? 'ml' : o.mode === 'niveau' ? '—' : (o.unite || 'pièces'), tri: (t, o) => t !== 'accessoires' ? 'ml' : (o.unite || 'pièces') },
   { k: 'par_carton', titre: 'Contenance', val: (t, o) => num(o.par_carton) === null ? '—' : nombreJoli(num(o.par_carton)), tri: (t, o) => num(o.par_carton) },
   { k: 'note', titre: 'Note', classe: 'note', val: (t, o) => o.note || '—', tri: (t, o) => o.note },
+  { k: 'suivi', titre: 'Stocké', val: (t, o) => o.suivi === false ? 'Non' : 'Oui', tri: (t, o) => o.suivi === false ? 1 : 0 },
   { k: 'maj', titre: 'Dernier changement', val: (t, o) => o.maj ? `${jour(o.maj)}${o.maj_par ? ' · ' + o.maj_par : ''}` : '—', tri: (t, o) => o.maj },
 ];
 // Le stock et l'état juste après le nom : sur téléphone, c'est ce qu'on voit sans faire défiler de côté
@@ -1341,7 +1348,7 @@ function tableauEntrepot(e, garde, toutOuvrir, redessiner) {
       const articles = sous.flatMap(s => s.articles);
       return articles.length ? { z: n.zone, sous, articles } : null;
     }
-    const articles = articlesDuRayon(n.zone.id).filter(x => garde(x.t, x.o));
+    const articles = articlesDuRayon(n.zone.id, etat.filtre === 'passtock').filter(x => garde(x.t, x.o));
     return articles.length ? { z: n.zone, sous: null, articles } : null;
   }
   const blocs = e.enfants.map(collecter).filter(Boolean);
@@ -1558,6 +1565,9 @@ const EDITEURS = {
   unite: (t, o) => t !== 'accessoires' || o.mode === 'niveau' ? null : { type: 'liste', options: optionsUnites(o), valeur: o.unite, lire: v => champListe(o, 'unite', v) },
   par_carton: (t, o) => (t === 'descentes' || (t === 'accessoires' && o.mode !== 'niveau')) ? caseNombre(o, 'par_carton') : null,
   note: (t, o) => caseTexte(o, 'note'),
+  // Sanji, 13/11 : « Pas stocké », aussi en lot (« ☑ Plusieurs » → colonne « Stocké » → Non)
+  suivi: (t, o) => ({ type: 'liste', options: [['oui', 'Oui'], ['non', 'Non (pas stocké)']], valeur: o.suivi === false ? 'non' : 'oui',
+    lire: v => (v === 'non') === (o.suivi === false) ? null : { suivi: v !== 'non' } }),
 };
 
 /** La case Stock : un nombre ou un niveau se tape sur place ; bobines, descentes et « mixte » ouvrent une petite fenêtre. */
@@ -1631,7 +1641,7 @@ function fenetreCompter(t, o) {
  * (ou un rayon entier), on choisit la colonne et la valeur, « Appliquer » : une seule écriture pour tous. Les mêmes règles
  * que case par case (la référence et le stock ne se changent pas en lot). Un article que la colonne ne concerne pas est sauté.
  */
-const COLONNES_LOT = ['fournisseur', 'zone', 'seuil', 'unite', 'mode', 'par_carton', 'famille', 'couleur', 'groupe', 'note'];
+const COLONNES_LOT = ['suivi', 'fournisseur', 'zone', 'seuil', 'unite', 'mode', 'par_carton', 'famille', 'couleur', 'groupe', 'note'];
 function barreLot() {
   const nb = el('strong');
   const selectionnes = () => [...etat.selection].map(k => { const i = k.indexOf('|'); const t = k.slice(0, i); return { t, o: trouver(t, k.slice(i + 1)) }; })

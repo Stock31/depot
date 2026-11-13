@@ -226,7 +226,7 @@ function pageGraphiques(corps) {
   const recherche = el('input', { type: 'search', placeholder: 'Chercher un article, une réf, une couleur', value: g.recherche });
   recherche.addEventListener('input', () => { g.recherche = recherche.value; dessinerChoix(); calculer(); });
   const zoneChoix = el('div');
-  const tousArticles = () => ARTICLES.flatMap(t => tous(t).filter(o => t !== 'accessoires' || o.suivi !== false).map(o => ({ t, o, cle: t + '|' + o.id })));
+  const tousArticles = () => ARTICLES.flatMap(t => tous(t).filter(o => o.suivi !== false).map(o => ({ t, o, cle: t + '|' + o.id })));
   const passe = (x, sauf) => FILTRES_STOCK.every(([k, , f]) => k === sauf || !g.filtres[k] || f(x.t, x.o).includes(g.filtres[k]));
   function candidats() {
     const mots = normaliser(g.recherche).split(/\s+/).filter(Boolean);
