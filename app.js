@@ -1172,7 +1172,8 @@ function pageStock(corps) {
     el('button', { class: 'second', onclick: () => fenetreColonnes(() => principal('stock')) }, affichageStock() === 'tableau' ? '⚙︎ Colonnes' : '⚙︎ Affichage'),
     // Sanji : « la possibilité de changer plusieurs cases d'une colonne en une fois »
     affichageStock() === 'tableau' ? el('button', { class: etat.selection ? 'principal' : 'second', style: etat.selection ? 'width:auto;margin:0' : null,
-      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '✓ Fini' : '☑︎ Plusieurs') : null);
+      // Sanji, 13/11 : la case vide quand ce n'est pas utilisé, cochée une fois activé ; « Sélection multiple » plutôt que « Plusieurs »
+      onclick: () => { etat.selection = etat.selection ? null : new Set(); principal('stock'); } }, etat.selection ? '☑ Sélection multiple' : '☐ Sélection multiple') : null);
   corps.append(outils, champ, puces, filtresZone, liste);
   if (etat.selection && affichageStock() === 'tableau') { corps.classList.add('avec-barre'); corps.append(barreLot()); }
   else etat.majBarreLot = null;
